@@ -1,0 +1,35 @@
+[
+  {
+    "event_id": "example_unnecessary",
+    "valid_pair": true,
+    "decision_intervene": false,
+    "branch_e": {"duration_s": 3.0, "collision": false, "lane": false},
+    "branch_f": {"duration_s": 3.0, "collision": false, "lane": false}
+  },
+  {
+    "event_id": "example_effective",
+    "valid_pair": true,
+    "decision_intervene": true,
+    "branch_e": {"duration_s": 3.0, "collision": true, "lane": false},
+    "branch_f": {"duration_s": 3.0, "collision": false, "lane": false}
+  },
+  {
+    "event_id": "example_ineffective",
+    "valid_pair": true,
+    "decision_intervene": true,
+    "branch_e": {"duration_s": 3.0, "collision": false, "lane": true},
+    "branch_f": {"duration_s": 3.0, "collision": false, "lane": true}
+  },
+  {
+    "event_id": "example_harmful",
+    "valid_pair": true,
+    "decision_intervene": false,
+    "branch_e": {"duration_s": 3.0, "collision": false, "lane": false},
+    "branch_f": {"duration_s": 3.0, "collision": true, "lane": false}
+  },
+  {
+    "event_id": "example_invalid",
+    "valid_pair": false,
+    "invalid_reason": "checkpoint_restore_failed"
+  }
+]

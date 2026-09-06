@@ -1,0 +1,14 @@
+# These environment variables work both inside Docker and in garage_2.
+garage_root: ${CARLA_GARAGE_ROOT}
+carla_root: ${CARLA_ROOT}
+model_dir: ${TFPP_MODEL}
+# Paths below are relative to garage_root unless absolute.
+routes: leaderboard/data/debug.xml
+output_dir: ${EXPERIMENT_OUTPUT_ROOT}/tfpp_debug
+host: 127.0.0.1
+port: 2000
+traffic_manager_port: 8000
+traffic_manager_seed: 100
+repetitions: 1
+timeout: 300
+debug: 0
