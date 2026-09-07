@@ -36,7 +36,7 @@ class EvaluationTests(unittest.TestCase):
         self.assertEqual(result["confusion"], {"TP": 1, "TN": 2, "FP": 1, "FN": 0})
         self.assertEqual(result["precision"], 0.5)
         self.assertEqual(result["recall"], 1.0)
-        self.assertEqual(result["invalid_reasons"], {"checkpoint_restore_failed": 1})
+        self.assertEqual(result["invalid_reasons"], {"incomplete_run": 1})
 
     def test_rejects_strings_partial_horizons_and_duplicates(self):
         for key, value in (("collision", "false"), ("duration_s", 2.0), ("duration_s", True)):

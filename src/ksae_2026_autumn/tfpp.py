@@ -20,7 +20,9 @@ def expand_path(value: str) -> Path:
     return Path(expanded).expanduser().resolve()
 
 
-def prepare_run(config_path: Path) -> tuple[list[str], dict[str, str], dict]:
+def prepare_run(
+    config_path: Path, *, output_dir: Path | None = None
+) -> tuple[list[str], dict[str, str], dict]:
     config = yaml.safe_load(config_path.read_text(encoding="utf-8"))
     if not isinstance(config, dict):
         raise ValueError("config must be a YAML mapping")
@@ -39,7 +41,7 @@ def prepare_run(config_path: Path) -> tuple[list[str], dict[str, str], dict]:
     garage = expand_path(config["garage_root"])
     carla = expand_path(config["carla_root"])
     model = expand_path(config["model_dir"])
-    output = expand_path(config["output_dir"])
+    output = expand_path(str(output_dir) if output_dir is not None else config["output_dir"])
     routes = Path(os.path.expandvars(config["routes"])).expanduser()
     routes = routes.resolve() if routes.is_absolute() else (garage / routes).resolve()
     evaluator = garage / "leaderboard/leaderboard/leaderboard_evaluator_local.py"
@@ -121,8 +123,9 @@ def sha256_file(path: Path) -> str:
     return digest.hexdigest()
 
 
-def run(config_path: Path, dry_run: bool = False) -> int:
-    command, env, resolved = prepare_run(config_path)
+def run(config_path: Path, dry_run: bool = False, *, output_dir: Path | None = None) -> int:
+    """Run one configuration; output_dir overrides its destination without editing YAML."""
+    command, env, resolved = prepare_run(config_path, output_dir=output_dir)
     print(shlex.join(command), flush=True)
     if dry_run:
         return 0

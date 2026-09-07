@@ -1,3 +1,3 @@
-"""Utilities for TF++ execution and paired intervention evaluation."""
+"""Run TransFuser++ and compare driving-control results."""
 
-__version__ = "0.2.0"
+__version__ = "0.3.0"

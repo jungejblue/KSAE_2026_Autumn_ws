@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "ksae-2026-autumn"
-version = "0.2.0"
-description = "CARLA Garage TF++ launcher and paired intervention evaluation utilities"
+version = "0.3.0"
+description = "Tools for running TransFuser++ in CARLA and scoring driving-control results"
 readme = "README.md"
 requires-python = ">=3.10,<3.11"
 dependencies = ["PyYAML>=6.0,<7.0"]

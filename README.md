@@ -1,211 +1,285 @@
 # KSAE_2026_Autumn_ws
 
-CARLA Garage의 TransFuser++(TF++)를 실행하고, E2E와 규칙 기반 제어기의 쌍대 실행 결과로
-개입 필요성과 유효성을 평가하는 Python 도구 모음입니다.
+**CARLA에서 TransFuser++를 실행하고, 주행 제어 결과를 비교·집계하는 Python 도구 모음입니다.**
 
-제공 기능은 **TF++ 로컬 평가 실행, 제어 지연 FIFO, 개입 판단 조건 조합, E/F 결과 채점**입니다.
-실제 fallback 차량 제어, TTC/TTLC 예측, CARLA 상태 복원 및 쌍대 주행 수집기는 이 저장소에서
-제공하지 않습니다. 결과 채점 도구에는 외부 수집기로 만든 E/F 결과를 입력합니다.
+| 기능 | 사용 방법 | 출력 |
+|---|---|---|
+| 두 제어 모드의 결과 비교 | `tools/evaluate_pairs.py`에 결과 JSON 입력 | 결과 분류, 혼동행렬, precision/recall |
+| TransFuser++ 주행 실행 | `tools/run_tfpp.py`에 설정 YAML 입력 | CARLA Garage 평가 결과와 실행 정보 |
+| 제어 명령 지연·전환 판단 | Python에서 `control.py` 함수 사용 | 지연된 명령 또는 전환 여부 |
 
-## 구조
+결과 비교와 제어 유틸리티는 Python 3.10만으로 사용할 수 있습니다.
+TransFuser++ 실행에는 CARLA, CARLA Garage, 모델 파일과 NVIDIA GPU가 추가로 필요합니다.
 
-```text
-configs/                       실행 설정과 입력 예제
-src/ksae_2026_autumn/
-  control.py                   제어 지연, 후보 시점, 개입 조건
-  evaluation.py                위반·개입 결과 분류 및 집계
-  tfpp.py                      CARLA Garage 로컬 평가기 연결
-tools/
-  docker.sh                    공식 Garage 이미지 빌드/실행
-  run_tfpp.py                  TF++ 실행 명령
-  evaluate_pairs.py            저장된 E/F 결과 채점 명령
-tests/                         CARLA 없이 실행하는 자동 검사
-```
+## 빠른 시작: 예제 결과 집계
 
-새 시각화·분석·변환 도구도 `tools/`에 파일로 추가합니다. 여러 실행에서 재사용하는 제어·평가
-함수는 `src/ksae_2026_autumn/`에 추가합니다. 출력 파일은 실행 시 `outputs/` 또는 지정한 외부
-경로에 생성하며 Git에서 제외합니다.
-
-## 1. 외부 파일 준비
-
-Linux/Ubuntu 호스트, NVIDIA GPU/driver, Docker와 NVIDIA Container Toolkit이 필요합니다.
-호스트 Ubuntu 22.04에서 Garage의 Ubuntu 20.04 컨테이너를 사용할 수 있습니다.
+Ubuntu 22.04 / Python 3.10 터미널에서 실행합니다.
+ZIP으로 받은 경우 압축을 풀고 저장소 폴더로 이동한 뒤 가상환경 생성부터 실행하세요.
 
 ```bash
 git clone https://github.com/jungejblue/KSAE_2026_Autumn_ws.git
-git clone --branch leaderboard_2 https://github.com/autonomousvision/carla_garage.git
-git -C carla_garage checkout 72f39a63423a5edef6904b1487e0360a64bcf445
 cd KSAE_2026_Autumn_ws
+python3.10 -m venv .venv
+source .venv/bin/activate
+python -m pip install -e .
+python tools/evaluate_pairs.py configs/pairs.example.json
 ```
 
-별도 경로에 CARLA 0.9.15와 TF++ pretrained model을 준비합니다.
-[CARLA 설치](https://carla.readthedocs.io/en/0.9.15/start_quickstart/)와
-[Garage 모델 안내](https://github.com/autonomousvision/carla_garage/tree/leaderboard_2#pre-trained-models)를
-참고하세요. 모델 폴더에는 `config.json`과 사용할 **`.pth` 한 개**를 둡니다. Garage는 여러 가중치가
-있으면 ensemble로 실행하므로, 이 저장소의 단일 모델 실행기는 가중치가 여러 개면 중단합니다.
-배포 모델의 `args.txt`가 있다면 같이 보관합니다.
+명령이 완료되면 다음 값을 포함하는 JSON이 터미널에 출력됩니다.
 
-호스트 터미널에서 자신의 실제 경로를 설정합니다. 아래 경로는 예시입니다.
+```json
+{
+  "total_pairs": 5,
+  "valid_pairs": 4,
+  "invalid_pairs": 1,
+  "confusion": {"TP": 1, "TN": 2, "FP": 1, "FN": 0},
+  "precision": 0.5,
+  "recall": 1.0
+}
+```
+
+위 내용은 전체 출력 중 일부입니다. `pairs.example.json`은 사용법 확인용 예제 데이터입니다.
+결과를 파일로 저장하려면 새 파일 경로를 지정합니다.
 
 ```bash
-export CARLA_ROOT="$HOME/e2e_carla_ws"
-export CARLA_GARAGE_ROOT="$HOME/carla_garage"
-export TFPP_MODEL="$HOME/e2e_checkpoints/tfpp_single"
-export EXPERIMENT_OUTPUT_ROOT="$HOME/e2e_experiment_outputs"
+python tools/evaluate_pairs.py configs/pairs.example.json --output outputs/example_summary.json
 ```
 
-CARLA 서버·맵·Garage 원본·모델 가중치는 이 저장소에 복사하지 않습니다.
+이후 명령은 저장소 루트에서 가상환경을 활성화한 상태로 실행합니다.
 
-## 2. CARLA Garage Docker 이미지 사용
+## 직접 수집한 결과 비교
 
-공식 Garage README는 공개 pull 태그 대신
-[`tools/Dockerfile.master`](https://github.com/autonomousvision/carla_garage/blob/leaderboard_2/tools/Dockerfile.master)와
-[`make_docker.sh`](https://github.com/autonomousvision/carla_garage/blob/leaderboard_2/tools/make_docker.sh)로
-`leaderboard-user` 이미지를 만드는 방법을 안내합니다. `leaderboard-user:latest`는 이 과정에서
-생기는 **로컬 이미지 이름**이며 공식 공개 이미지 주소로 가정하면 안 됩니다.
+입력은 다음 레코드들을 담은 JSON 배열입니다. `branch_e`는 주 제어기,
+`branch_f`는 대체 제어기의 결과를 뜻합니다.
 
-아래 명령은 외부 Garage의 Dockerfile을 수정 없이 사용합니다. 빌드에 필요한 PythonAPI와
-Garage 코드를 임시 디렉터리에 모으고 가중치는 제외합니다. 이 저장소는 별도 Dockerfile이나
-Compose를 관리하지 않습니다.
+```json
+[
+  {
+    "event_id": "pair_001",
+    "valid_pair": true,
+    "decision_intervene": true,
+    "branch_e": {"duration_s": 3.0, "collision": true, "lane": false},
+    "branch_f": {"duration_s": 3.0, "collision": false, "lane": false}
+  }
+]
+```
+
+| 필드 | 의미 |
+|---|---|
+| `event_id` | 중복되지 않는 문자열 ID |
+| `valid_pair` | 두 실행이 비교 가능한 조건으로 수집됐는지 나타내는 boolean |
+| `decision_intervene` | 해당 시점에 대체 제어기로 전환한다고 판단했으면 `true` |
+| `duration_s` | 각 실행의 평가 구간 길이. 필수 입력이며 기본 명령에서는 3.0초 |
+| `collision` | 평가 구간에 충돌이 발생했으면 `true` |
+| `lane` | 평가 구간에 허용 주행 영역 이탈이 발생했으면 `true` |
+
+boolean은 문자열 `"true"`가 아닌 JSON의 `true`/`false`로 입력합니다.
+두 실행은 같은 시작 조건과 평가 구간을 사용해야 합니다. 이 도구는 저장된 값을 집계하며,
+시뮬레이터를 실행하거나 원본 주행의 비교 가능성을 자동 검증하지 않습니다.
+
+```bash
+python tools/evaluate_pairs.py /path/to/pairs.json --output outputs/summary.json
+```
+
+평가 구간이 5초라면 모든 유효 레코드의 `duration_s`를 5.0으로 기록하고
+`--horizon-seconds 5`를 추가합니다. 길이가 다른 결과는 한 번에 집계하지 않습니다.
+불완전한 실행은 다음처럼 표시할 수 있습니다.
+
+```json
+{"event_id": "pair_002", "valid_pair": false, "invalid_reason": "incomplete_run"}
+```
+
+이 레코드에는 두 branch와 `decision_intervene`가 필요하지 않습니다.
+제외된 레코드는 `invalid_pairs`와 `invalid_reasons`에 집계됩니다.
+
+충돌 또는 영역 이탈 중 하나라도 발생하면 해당 branch의 위반으로 분류합니다.
+
+| 주 제어기 위반 | 대체 제어기 위반 | 출력 분류 |
+|---|---|---|
+| 없음 | 없음 | `UNNECESSARY` |
+| 있음 | 없음 | `NECESSARY_EFFECTIVE` |
+| 있음 | 있음 | `NECESSARY_INEFFECTIVE` |
+| 없음 | 있음 | `HARMFUL` |
+
+`NECESSARY_EFFECTIVE`를 positive로 두고 `decision_intervene`와 비교하여 TP/TN/FP/FN을 계산합니다.
+precision은 `TP / (TP + FP)`, recall은 `TP / (TP + FN)`이며, 분모가 0이면 `null`입니다.
+전체 출력에는 분류별 개수(`outcomes`)와 레코드별 결과(`events`)도 포함됩니다.
+
+## TransFuser++ 실행
+
+### 실행 환경 준비
+
+지원 대상은 CARLA 0.9.15와 CARLA Garage의 `leaderboard_2` 코드입니다.
+실행기는 Garage의 `leaderboard_evaluator_local.py`를 호출합니다.
+
+| 준비할 항목 | 설치·다운로드 안내 |
+|---|---|
+| CARLA 0.9.15 서버와 PythonAPI | [CARLA 설치 안내](https://carla.readthedocs.io/en/0.9.15/start_quickstart/) |
+| NVIDIA GPU 드라이버 | [NVIDIA 드라이버](https://www.nvidia.com/en-us/drivers/) |
+| Docker Engine | [Ubuntu 설치 안내](https://docs.docker.com/engine/install/ubuntu/) |
+| NVIDIA Container Toolkit | [설치 및 Docker 설정](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html) |
+| TransFuser++ 모델 | [CARLA Garage 모델 다운로드](https://github.com/autonomousvision/carla_garage/tree/leaderboard_2#pre-trained-models) |
+
+호스트 터미널에서 Garage 코드를 준비합니다. 아래 명령은 연결 대상 코드의 버전을 고정합니다.
+
+```bash
+git clone --branch leaderboard_2 https://github.com/autonomousvision/carla_garage.git "$HOME/carla_garage"
+git -C "$HOME/carla_garage" checkout 72f39a63423a5edef6904b1487e0360a64bcf445
+```
+
+모델 폴더에는 같은 배포 모델의 **`config.json`과 사용할 `.pth` 한 개**를 넣습니다.
+서버·맵·Garage 원본·모델은 이 저장소 밖에 보관하고, 실제 경로를 설정합니다.
+
+```bash
+export CARLA_ROOT="$HOME/CARLA_0.9.15"
+export CARLA_GARAGE_ROOT="$HOME/carla_garage"
+export TFPP_MODEL="$HOME/models/tfpp"
+export EXPERIMENT_OUTPUT_ROOT="$HOME/carla_outputs"
+export GARAGE_IMAGE=leaderboard-user:latest
+```
+
+### Docker 환경 열기
+
+저장소 루트의 **호스트 터미널**에서 실행합니다.
+`build`는 [Garage 공식 Dockerfile](https://github.com/autonomousvision/carla_garage/blob/leaderboard_2/tools/Dockerfile.master)로
+로컬 이미지를 만듭니다. 같은 Garage checkout으로 만든 이미지가 있으면 `build`를 생략합니다.
+현재 사용자로 `docker info`가 실행되는 환경에서 사용하세요.
 
 ```bash
 bash tools/docker.sh build
 bash tools/docker.sh run
 ```
 
-동일 Garage checkout으로 만든 이미지가 이미 있다면 `build`를 생략합니다. 이미지 이름을
-직접 지정할 수도 있습니다.
+스크립트는 호스트의 CARLA PythonAPI·Garage·모델을 컨테이너에 읽기 전용으로 연결합니다.
+코드와 출력 경로는 쓰기 가능하게 연결하며, 컨테이너의 `/outputs`는 호스트의
+`EXPERIMENT_OUTPUT_ROOT`에 해당합니다. CARLA 서버는 호스트에서 실행합니다.
+
+이어서 **컨테이너 내부**에서 설치합니다. `.venv-docker`는 이미지에 설치된 패키지를
+재사용하며, 빠른 시작에서 만든 호스트의 `.venv`와 별도로 사용합니다.
 
 ```bash
-export GARAGE_IMAGE=leaderboard-user:latest
-bash tools/docker.sh run
-```
-
-기본 이미지 설정은 Garage의 Ubuntu 20.04, CUDA 11.7.1/cuDNN 8, Python 3.10입니다.
-upstream 설치 절차의 네트워크/의존성 호환성까지 이 저장소가 보장하지는 않습니다.
-이미지와 mount하는 Garage 코드의 버전을 맞춰 사용하세요.
-
-컨테이너 내부에서 Garage의 Python 패키지를 재사용하는 가상환경을 만들고 연구 코드를 설치합니다.
-
-```bash
-python -m venv --system-site-packages .venv
-source .venv/bin/activate
+python -m venv --system-site-packages .venv-docker
+source .venv-docker/bin/activate
 python -m pip install --no-cache-dir -e .
-python -c "import carla, torch; print(torch.__version__); print(torch.cuda.is_available())"
+python -c "import carla, torch; print('CUDA available:', torch.cuda.is_available())"
 ```
 
-다음 컨테이너 진입부터는 `source .venv/bin/activate`만 실행합니다. Garage 이미지의 Python·패키지
-구성이 바뀌면 해당 이미지에 맞는 가상환경을 새로 만드세요. `exit`로 셸을 종료하면 컨테이너는
-삭제되고, mount한 코드·가상환경·결과 파일은 유지됩니다.
+마지막 명령에서 import 오류가 없고 `CUDA available: True`가 출력되는지 확인합니다.
+다음 진입부터는 `source .venv-docker/bin/activate`로 활성화합니다.
+이미지의 Python·의존성 구성이 바뀌면 가상환경도 새로 만듭니다.
 
-Docker를 사용하지 않는 경우에도 Garage의 `garage_2` 환경에서 `python -m pip install -e .` 후
-동일 Python 명령을 사용할 수 있습니다. 필요한 설치 절차는
-[Garage Setup](https://github.com/autonomousvision/carla_garage/tree/leaderboard_2#setup)을 따릅니다.
+이미 [Garage의 설치 안내](https://github.com/autonomousvision/carla_garage/tree/leaderboard_2#setup)로
+호스트 Python 환경을 구성했다면 Docker 대신 그 환경에서 `python -m pip install -e .` 후
+아래 실행 명령을 사용할 수 있습니다.
 
-## 3. TF++ 로컬 실행
+### 서버 시작과 주행 실행
 
-**호스트의 별도 터미널**에서 CARLA 서버를 실행합니다.
+**호스트의 별도 터미널**에서 실제 CARLA 설치 경로로 이동하고 서버를 시작합니다.
 
 ```bash
-cd "$CARLA_ROOT"
+cd "$HOME/CARLA_0.9.15"
 ./CarlaUE4.sh -RenderOffScreen -nosound -carla-rpc-port=2000
 ```
 
-**컨테이너 안의 저장소 루트**에서 먼저 설정과 실행 명령을 확인한 뒤 실행합니다.
+**컨테이너 내부의 저장소 루트**에서 경로를 점검하고 실행합니다.
 
 ```bash
 python tools/run_tfpp.py --config configs/tfpp.yaml --dry-run
 python tools/run_tfpp.py --config configs/tfpp.yaml
 ```
 
-`configs/tfpp.yaml`에서 포트, seed, route와 출력 경로를 변경합니다. `garage_root`, `carla_root`,
-`model_dir`는 위 환경변수를 읽으며 Docker 진입 시 컨테이너 경로로 자동 연결됩니다.
-상대 `routes`는 Garage 루트 기준, 상대 `output_dir`는 명령을 실행한 디렉터리 기준입니다.
-기본 출력은 `${EXPERIMENT_OUTPUT_ROOT}/tfpp_debug`입니다.
+`--dry-run`은 파일 경로와 명령을 확인하며 서버 접속이나 모델 추론은 수행하지 않습니다.
 
-실행기는 기존 출력 폴더를 덮어쓰지 않습니다. 다시 실행할 때는 `output_dir`를 새 이름으로
-바꾸세요. 결과 폴더에는 Garage의 `result.json`과 실행 설정·명령·Garage commit·모델/route hash를
-담은 `run.json`이 저장됩니다. `result.json` 생성이나 프로세스 종료 코드만으로 주행 성공을
-판정하지 말고 route 상태·완주율·위반 항목을 확인하세요.
+| `configs/tfpp.yaml` 설정 | 의미 |
+|---|---|
+| `garage_root`, `carla_root`, `model_dir` | 앞에서 설정한 환경변수로 외부 파일 연결 |
+| `routes` | route XML. 상대 경로는 Garage 루트 기준 |
+| `output_dir` | 출력 폴더. 상대 경로는 명령 실행 위치 기준 |
+| `host`, `port` | CARLA 서버 주소와 RPC 포트 |
+| `traffic_manager_port`, `traffic_manager_seed` | Traffic Manager 포트와 난수 seed |
+| `repetitions`, `timeout`, `debug` | route 반복 횟수, 평가기에 전달하는 timeout(초), 디버그 수준 |
 
-### Bench2Drive 평가
+기본 route는 Garage의 `leaderboard/data/debug.xml`입니다. 실행 전 해당 XML에 지정된 맵이
+CARLA 설치에 포함되어 있는지 확인하세요. Bench2Drive 실행은
+[Garage의 별도 평가 안내](https://github.com/autonomousvision/carla_garage/tree/leaderboard_2#bench2drive)를 따릅니다.
 
-위 명령은 Garage의 `leaderboard_evaluator_local.py`와 `debug.xml`을 사용하는 연결 확인용
-실행입니다. **공식 Bench2Drive 점수를 생성하는 실행과 다릅니다.**
+기본 출력 폴더는 `${EXPERIMENT_OUTPUT_ROOT}/tfpp_run`입니다.
+출력 폴더가 이미 존재하면 중단합니다. 다시 실행할 때는 새 경로를 지정합니다.
 
-Bench2Drive는 Garage의 `Bench2Drive/leaderboard/scripts/run_evaluation_tf++.sh`를 사용합니다.
-이 스크립트는 경로·GPU 수 조정이 필요하며 CARLA 서버도 직접 실행합니다. 이 저장소의
-Docker 실행기는 호스트 서버에 접속하는 Python 클라이언트용이므로, 여기서 benchmark 스크립트를
-그대로 실행하지 마세요. Garage의 완전한 CARLA 환경에서
-[공식 Bench2Drive 실행 안내](https://github.com/autonomousvision/carla_garage/tree/leaderboard_2#bench2drive)를
-따르세요. 확인한 Garage checkout은 `72f39a63423a5edef6904b1487e0360a64bcf445`이며, 그 README는
-내장 Bench2Drive를 v0.0.3으로 표기합니다. 별도 v0.0.4 환경을 사용한다면 같은 버전으로 간주하지
-말고 평가 코드·routes 버전을 함께 맞춰야 합니다.
+```bash
+python tools/run_tfpp.py --config configs/tfpp.yaml --output-dir /outputs/tfpp_run_02
+```
 
-## 4. 제어 코드에서 재사용
+| 출력 파일 | 내용 |
+|---|---|
+| `result.json` | Garage가 기록하는 route 상태·점수·위반 결과 |
+| `run.json` | 실행 명령, 설정, Garage commit, 모델·route hash, 프로세스 종료 코드 |
 
-20 Hz에서 100 ms 지연은 2 ticks입니다. FIFO에는 복사 가능한 Python 자료형을 넣고,
-실제 `carla.VehicleControl` 변환은 호출 측에서 수행합니다.
-지연 조건 0/100/200/500 ms는 각각 0/2/4/10 ticks로 설정합니다.
+`result.json`이 생성됐는지만 확인하지 말고 그 안의 route 상태와 완주·위반 결과를 확인하세요.
+컨테이너는 `exit`, CARLA 서버는 실행 터미널에서 `Ctrl+C`로 종료합니다. 연결한 결과 파일은 유지됩니다.
+
+## Python에서 제어 유틸리티 사용
+
+`ActionDelayFIFO`는 입력 명령을 지정한 호출 횟수만큼 늦춰 반환합니다.
 
 ```python
-from ksae_2026_autumn.control import ActionDelayFIFO, candidate_time, proposed_decision
+from ksae_2026_autumn.control import ActionDelayFIFO
 
-fifo = ActionDelayFIFO(2, {"throttle": 0.0, "steer": 0.0, "brake": 1.0})
-applied = fifo.step({"throttle": 0.3, "steer": 0.0, "brake": 0.0})
-t_candidate = candidate_time(onset_s=10.0, latency_ms=100)  # 10.6 s
+delay = ActionDelayFIFO(delay_ticks=2, initial_action="STOP")
+print(delay.step("A"))  # STOP
+print(delay.step("B"))  # STOP
+print(delay.step("C"))  # A
+```
 
-intervene = proposed_decision(
+실제 명령에는 `throttle`, `steer`, `brake`를 담은 Python 딕셔너리를 사용할 수 있습니다.
+`reset()`은 초기 큐로 되돌리고, `snapshot()`/`restore()`는 큐 상태를 저장·복원합니다.
+이 큐에는 지연을 적용하려는 명령만 전달합니다.
+
+`baseline_decision()`은 충돌 위험 또는 이탈 위험이 참이면 `True`를 반환합니다.
+`proposed_decision()`은 명령 지연, 위험, 대체 제어의 이득, 조건 지속 여부를 조합합니다.
+두 함수는 외부에서 계산한 boolean을 입력받는 판단 함수입니다.
+
+```python
+from ksae_2026_autumn.control import proposed_decision
+
+switch = proposed_decision(
     action_age_gate=True,
     predicted_e2e_risk=True,
     fallback_benefit_gate=True,
     persistence_gate=True,
 )
+print(switch)  # True
 ```
 
-FIFO 초기 구간에는 전달한 초기 제어가 적용됩니다. 지연 episode의 시작·종료에서 FIFO를
-어떻게 채울지는 호출 측에서 정해야 합니다. fallback 제어는 이 FIFO를 통과시키지 않습니다.
-`proposed_decision`의 입력은 외부에서 계산한 판단값이며 이 함수가 TTC/TTLC를 예측하지는 않습니다.
+## 파일 구성
 
-## 5. E/F 결과 채점
+| 위치 | 역할 |
+|---|---|
+| `configs/` | 실행 설정과 결과 입력 예제 |
+| `src/ksae_2026_autumn/control.py` | 명령 지연과 전환 판단 함수 |
+| `src/ksae_2026_autumn/evaluation.py` | 위반 판정, 결과 분류, 지표 집계 |
+| `src/ksae_2026_autumn/tfpp.py` | Garage 평가기 실행과 결과 경로 관리 |
+| `tools/` | 실행·결과 처리 명령 |
+| `tests/` | 자동 검사 |
 
-동일 후보 상태에서 E는 지연된 E2E를, F는 fallback을 3초 동안 적용하여 각각 결과를 수집합니다.
-F는 이 구간 중 E2E로 복귀하지 않습니다. 충돌 또는 허용 주행 영역 이탈을 위반으로 판정합니다.
-바퀴 네 개 중 하나의 지면 투영점이라도 허용 주행 영역을 벗어나면 이탈 후보이며, 수치 오차를
-줄이기 위해 연속 2 ticks 확인 후 `lane: true`로 기록합니다.
-`any_wheel_outside_corridor()`는 한 프레임의 판정만 수행합니다. 충돌 이벤트는 원인과 무관하게
-포함하며, 충돌·바퀴 좌표 검출과 상태 복원 재현성 검사는 수집기에서 수행해야 합니다.
+## 문제 해결 및 코드 검사
 
-| E 위반 | F 위반 | 결과 |
-|---|---|---|
-| 없음 | 없음 | UNNECESSARY |
-| 있음 | 없음 | NECESSARY_EFFECTIVE |
-| 있음 | 있음 | NECESSARY_INEFFECTIVE |
-| 없음 | 있음 | HARMFUL |
+| 증상 | 확인할 사항 |
+|---|---|
+| `No module named ksae_2026_autumn` | 현재 Python 환경에서 `python -m pip install -e .` 실행 |
+| 가상환경 생성 시 `ensurepip` 오류 | Ubuntu 22.04에서 `sudo apt install python3.10-venv` 후 재시도 |
+| Docker socket의 `permission denied` | [Docker 사용자 권한 설정](https://docs.docker.com/engine/install/linux-postinstall/) 확인 |
+| 환경변수 또는 파일 경로 오류 | `configs/tfpp.yaml`과 호스트의 export 경로 확인 |
+| `.pth` 개수 오류 | 모델 폴더에 `config.json`과 사용할 가중치 한 개만 배치 |
+| 출력 경로가 이미 존재함 | TF++은 `--output-dir`, 결과 집계는 `--output`에 새 경로 지정 |
+| CARLA 연결 timeout | 서버 실행 여부, 설정한 RPC 포트, 맵 로딩 상태 확인 |
+| `CUDA available: False` 또는 GPU 실행 오류 | 호스트의 `nvidia-smi`와 Container Toolkit 설정 확인 |
 
-`NECESSARY_EFFECTIVE`만 이진 분류의 positive입니다. `decision_intervene`와 조합해 TP/TN/FP/FN을
-집계합니다. `valid_pair: false`는 분류 집계에서 제외하고 `invalid_reason`별 개수를 따로 셉니다.
-
-```bash
-python tools/evaluate_pairs.py configs/pairs.example.json
-python tools/evaluate_pairs.py /outputs/pairs.json --output /outputs/pairs_summary.json
-```
-
-`configs/pairs.example.json`은 실제 실험 결과가 아닌 사용법 예제입니다. 예제를 실행하면 유효
-4건, 제외 1건, TP=1/TN=2/FP=1/FN=0이 나옵니다. 외부 수집기 출력도 같은 JSON 구조로 저장하세요.
-각 branch의 `duration_s`는 3.0이어야 합니다. 일찍 종료된 불완전 branch를 3초 결과로 채우지 말고
-invalid pair로 표시하세요. 필요하면 `--horizon-seconds`로 다른 길이를 지정할 수 있으며 서로
-다른 horizon의 결과는 섞어 집계하지 않습니다. 기존 결과 파일은 덮어쓰지 않습니다.
-
-## 코드 검사
-
-Python 3.10 환경에서 다음을 실행합니다. GitHub Actions도 같은 검사를 실행하며 CARLA/GPU는
-사용하지 않습니다.
+코드 검사는 다음 명령으로 실행합니다. GitHub Actions에서도 같은 검사를 실행합니다.
 
 ```bash
 python -m pip install -e '.[dev]'
 python -m ruff check .
 python -m unittest discover -s tests -v
 bash -n tools/docker.sh
-python tools/evaluate_pairs.py configs/pairs.example.json
 ```

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Use the upstream Garage Dockerfile unchanged; no project Dockerfile or Compose.
+# Build or open a CARLA Garage container using the upstream Dockerfile.
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"

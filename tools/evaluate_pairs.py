@@ -1,4 +1,4 @@
-"""Classify previously collected E/F branch results; does not execute CARLA."""
+"""Compare saved primary/fallback results and report classifications and metrics."""
 
 import argparse
 import json
@@ -9,9 +9,12 @@ from ksae_2026_autumn.evaluation import evaluate_pairs
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("input", type=Path, help="JSON list of pair records")
+    parser.add_argument("input", type=Path, help="JSON list; see configs/pairs.example.json")
     parser.add_argument("--output", type=Path, help="new output JSON path; defaults to stdout")
-    parser.add_argument("--horizon-seconds", type=float, default=3.0)
+    parser.add_argument(
+        "--horizon-seconds", type=float, default=3.0,
+        help="required duration_s for both branches in every valid pair (default: 3.0)",
+    )
     args = parser.parse_args()
     try:
         records = json.loads(args.input.read_text(encoding="utf-8"))

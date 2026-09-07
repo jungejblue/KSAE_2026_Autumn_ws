@@ -1,4 +1,4 @@
-"""Action delay and intervention gates; no CARLA imports or vehicle controller."""
+"""Copyable command queues and boolean switching rules."""
 
 from collections import deque
 from copy import deepcopy
@@ -8,10 +8,10 @@ T = TypeVar("T")
 
 
 class ActionDelayFIFO(Generic[T]):
-    """Apply E2E actions after delay_ticks; fill the startup window with initial_action.
+    """Return commands after delay_ticks calls; start with copies of initial_action.
 
     Pass copyable values (such as throttle/steer/brake dictionaries), not opaque
-    CARLA extension objects. Fallback commands must bypass this FIFO.
+    CARLA extension objects. Enqueue only commands that should be delayed.
     """
 
     def __init__(self, delay_ticks: int, initial_action: T) -> None:
@@ -39,13 +39,14 @@ class ActionDelayFIFO(Generic[T]):
 
 
 def candidate_time(onset_s: float, latency_ms: int, offset_s: float = 0.5) -> float:
-    """Return the candidate timestamp, independently of the monitor decision."""
+    """Return onset_s + latency_ms / 1000 + offset_s, in seconds."""
     if min(onset_s, latency_ms, offset_s) < 0:
         raise ValueError("timing values must be non-negative")
     return onset_s + latency_ms / 1000.0 + offset_s
 
 
 def baseline_decision(predicted_ttc_risk: bool, predicted_ttlc_risk: bool) -> bool:
+    """Return whether either collision risk or corridor-departure risk is present."""
     return bool(predicted_ttc_risk or predicted_ttlc_risk)
 
 
@@ -58,7 +59,12 @@ def proposed_decision(
     emergency_override: bool = False,
     fallback_not_worse: bool = False,
 ) -> bool:
-    """Combine externally computed gates. This function does not estimate TTC/TTLC."""
+    """Combine externally supplied booleans into a switching decision.
+
+    Normal switching requires all four gates. With emergency_override enabled,
+    action_age_gate, predicted_e2e_risk and fallback_not_worse are sufficient.
+    Risk prediction and temporal buffering are performed by the caller.
+    """
     normal = action_age_gate and predicted_e2e_risk and fallback_benefit_gate and persistence_gate
     emergency = emergency_override and action_age_gate and predicted_e2e_risk and fallback_not_worse
     return bool(normal or emergency)

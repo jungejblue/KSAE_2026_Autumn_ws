@@ -1,5 +1,7 @@
 import json
 import os
+import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -56,6 +58,21 @@ class TFPPTests(unittest.TestCase):
 
     def test_dry_run_does_not_create_output(self):
         self.assertEqual(run(self.config, dry_run=True), 0)
+        self.assertFalse(self.output.exists())
+
+    def test_cli_output_override(self):
+        repo = Path(__file__).resolve().parents[1]
+        output = self.output.parent / "custom_output"
+        command = [
+            sys.executable, str(repo / "tools/run_tfpp.py"),
+            "--config", str(self.config), "--output-dir", str(output),
+        ]
+        subprocess.run(command + ["--dry-run"], check=True, capture_output=True, text=True)
+        self.assertFalse(output.exists())
+        subprocess.run(command, check=True, capture_output=True, text=True)
+        metadata = json.loads((output / "run.json").read_text())
+        self.assertEqual(metadata["config"]["output_dir"], str(output))
+        self.assertTrue((output / "result.json").is_file())
         self.assertFalse(self.output.exists())
 
     def test_launch_and_metadata_without_carla(self):

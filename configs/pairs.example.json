@@ -1,35 +1,35 @@
 [
   {
-    "event_id": "example_unnecessary",
+    "event_id": "pair_001",
     "valid_pair": true,
     "decision_intervene": false,
     "branch_e": {"duration_s": 3.0, "collision": false, "lane": false},
     "branch_f": {"duration_s": 3.0, "collision": false, "lane": false}
   },
   {
-    "event_id": "example_effective",
+    "event_id": "pair_002",
     "valid_pair": true,
     "decision_intervene": true,
     "branch_e": {"duration_s": 3.0, "collision": true, "lane": false},
     "branch_f": {"duration_s": 3.0, "collision": false, "lane": false}
   },
   {
-    "event_id": "example_ineffective",
+    "event_id": "pair_003",
     "valid_pair": true,
     "decision_intervene": true,
     "branch_e": {"duration_s": 3.0, "collision": false, "lane": true},
     "branch_f": {"duration_s": 3.0, "collision": false, "lane": true}
   },
   {
-    "event_id": "example_harmful",
+    "event_id": "pair_004",
     "valid_pair": true,
     "decision_intervene": false,
     "branch_e": {"duration_s": 3.0, "collision": false, "lane": false},
     "branch_f": {"duration_s": 3.0, "collision": true, "lane": false}
   },
   {
-    "event_id": "example_invalid",
+    "event_id": "pair_005",
     "valid_pair": false,
-    "invalid_reason": "checkpoint_restore_failed"
+    "invalid_reason": "incomplete_run"
   }
 ]
