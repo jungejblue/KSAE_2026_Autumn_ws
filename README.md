@@ -6,6 +6,8 @@
 |---|---|---|
 | 두 제어 모드의 결과 비교 | `tools/evaluate_pairs.py`에 결과 JSON 입력 | 결과 분류, 혼동행렬, precision/recall |
 | TransFuser++ 주행 실행 | `tools/run_tfpp.py`에 설정 YAML 입력 | CARLA Garage 평가 결과와 실행 정보 |
+| 주행 시계열 기록 | `tools/run_telemetry.py run` | 센서 프레임, 차량 상태, 제어 명령 JSONL |
+| 저장된 로그 검사 | `tools/check_telemetry.py`에 실행 폴더 입력 | 누락·불일치 검사 결과 JSON |
 | 제어 명령 지연·전환 판단 | Python에서 `control.py` 함수 사용 | 지연된 명령 또는 전환 여부 |
 
 결과 비교와 제어 유틸리티는 Python 3.10만으로 사용할 수 있습니다.
@@ -218,6 +220,103 @@ python tools/run_tfpp.py --config configs/tfpp.yaml --output-dir /outputs/tfpp_r
 `result.json`이 생성됐는지만 확인하지 말고 그 안의 route 상태와 완주·위반 결과를 확인하세요.
 컨테이너는 `exit`, CARLA 서버는 실행 터미널에서 `Ctrl+C`로 종료합니다. 연결한 결과 파일은 유지됩니다.
 
+## 주행 시계열 기록과 검사
+
+`run_tfpp.py`는 YAML 기반 기본 평가 실행기입니다. 프레임별 상태와 제어 명령까지
+필요하면 `run_telemetry.py run`을 사용합니다. 두 명령을 동시에 실행하지 마세요.
+텔레메트리 실행기는 명령행 옵션을 사용하며 `configs/tfpp.yaml`을 읽지 않습니다.
+소스와 도구 경로를 함께 사용하므로 저장소를 유지하고 `pip install -e .`로 설치합니다.
+
+### 기존 서버에 연결하여 기록
+
+앞의 환경 준비와 서버 시작을 마친 다음, 컨테이너 내부에서 실행합니다.
+호스트 Garage Python 환경에서도 같은 명령을 사용할 수 있습니다.
+
+```bash
+python tools/run_telemetry.py run \
+  --evaluator local --logging on \
+  --garage "$CARLA_GARAGE_ROOT" --carla "$CARLA_ROOT" \
+  --model "$TFPP_MODEL" \
+  --routes "$CARLA_GARAGE_ROOT/leaderboard/data/debug.xml" \
+  --seed 100 --gpu 0 \
+  --output "$EXPERIMENT_OUTPUT_ROOT/telemetry_local_001"
+```
+
+`local`은 XML의 모든 route를 한 번씩 실행합니다. 일부만 실행하려면 별도의 route XML을
+준비합니다. `--routes-subset`은 `b2d` 모드에서만 사용합니다.
+출력 폴더는 매번 새 경로여야 합니다.
+
+### Bench2Drive route 기록
+
+이 모드는 평가기가 CARLA 서버를 시작하므로 **기존 서버를 종료한 뒤** 실행합니다.
+현재 `tools/docker.sh run`은 PythonAPI만 연결하므로 아래 명령은 전체 CARLA 설치와
+Garage 의존성이 있는 **호스트 Python 3.10 환경**에서 실행합니다.
+Garage의 `Bench2Drive` 코드와 XML에서 요구하는 맵도 준비되어 있어야 합니다.
+
+```bash
+python tools/run_telemetry.py run \
+  --evaluator b2d --logging on \
+  --garage "$CARLA_GARAGE_ROOT" --carla "$CARLA_ROOT" \
+  --model "$TFPP_MODEL" \
+  --routes "$CARLA_GARAGE_ROOT/Bench2Drive/leaderboard/data/bench2drive220.xml" \
+  --routes-subset 24211 --seed 100 --gpu 0 \
+  --output "$EXPERIMENT_OUTPUT_ROOT/telemetry_b2d_001"
+```
+
+`24211`은 선택 예시입니다. 사용할 XML에 있는 ID로 바꾸며 여러 개는 쉼표로 구분합니다.
+`--garage`, `--carla`, `--model`을 생략하면 각각 `CARLA_GARAGE_ROOT`, `CARLA_ROOT`,
+`TFPP_MODEL`을 사용합니다. `--host`, `--port`, `--tm-port`, `--timeout`도 지정할 수 있습니다.
+전체 옵션은 `python tools/run_telemetry.py run --help`로 확인합니다.
+
+### 저장 내용과 지원 범위
+
+| 실행 폴더 내 경로 | 내용 |
+|---|---|
+| `run.json` | 명령, seed, 모델·코드 hash, 제어 환경변수, 실행 환경, 종료 상태 |
+| `result.json` | 평가기의 route 점수와 위반 결과 |
+| `run.log`, `exit_code.txt` | 평가기 출력과 프로세스 종료 코드 |
+| `routes/<route_id>/route.json` | route 식별자, 센서 구성, 시뮬레이션 설정 |
+| `routes/<route_id>/ticks.jsonl` | 프레임별 상태·센서 프레임·제어 명령·처리 시간 |
+| `routes/<route_id>/summary.json` | 호출·행 개수, 시간 통계, 로거 종료 상태 |
+| `telemetry_check.json` | 실행 후 자동으로 수행하는 구조 검사 결과 |
+| `source/` | 실행에 사용한 코드·route·모델 설정 사본과 Git 상태 |
+
+`--logging off`는 프레임별 JSONL 기록을 끄고 호출 집계와 실행 정보를 남깁니다.
+출력은 저장소 밖의 `EXPERIMENT_OUTPUT_ROOT`에 보관하세요. 모델 가중치는 복사하지 않습니다.
+
+현재 로깅·검사는 **동기식 0.05초 간격, 지연 주입 없는 E2E 주행**을 대상으로 합니다.
+Garage의 핵심 소스 hash가 지원 버전과 다르면 실행을 중단합니다.
+로거는 원본 agent 호출과 제어 제출 지점에 연결되며 Garage 파일 자체를 수정하지 않습니다.
+`agent_step_wall_ms`는 agent 콜백의 경과 시간으로, GPU 모델 연산만 분리한 시간이 아닙니다.
+`submitted_control`은 제어 제출 함수 호출 후 기록한 명령이며 차량의 물리적 적용 완료를
+확인하는 신호는 아닙니다. `control.py`의 지연·전환 함수는 이 실행기에 자동 연결되지 않습니다.
+실행기는 `telemetry_cli.py`의 `CONTROL_ENV` 값을 적용하며 실제 값을 `run.json`에 남깁니다.
+
+### 저장된 로그 다시 검사
+
+CARLA와 GPU 없이 실행할 수 있습니다.
+
+```bash
+python tools/check_telemetry.py "$EXPERIMENT_OUTPUT_ROOT/telemetry_local_001"
+```
+
+| 상태 | 의미 |
+|---|---|
+| `PASS` | 구현된 구조 검사에서 오류·경고 없음 |
+| `REVIEW` | 구조 오류는 없지만 주행 결과나 관측값 차이 등 확인할 경고가 있음 |
+| `FAIL` | 실행 미완료, 프레임 누락, 제어 값 불일치 등 오류가 있음 |
+
+검사 명령의 종료 코드는 `PASS`/`REVIEW`에서 0, `FAIL`에서 1입니다.
+`PASS`는 안전한 주행이나 동일 궤적 재현을 보장하지 않습니다.
+이 로그를 `evaluate_pairs.py`에 직접 입력할 수는 없습니다. 비교할 실행 구간과 위반을
+판정하여 앞의 `pairs.json` 형식으로 준비해야 합니다.
+
+로깅 단위 테스트만 실행하고 결과를 저장하려면 다음 명령을 사용합니다.
+
+```bash
+python tools/run_telemetry.py self-test --output "$EXPERIMENT_OUTPUT_ROOT/telemetry_tests"
+```
+
 ## Python에서 제어 유틸리티 사용
 
 `ActionDelayFIFO`는 입력 명령을 지정한 호출 횟수만큼 늦춰 반환합니다.
@@ -259,6 +358,11 @@ print(switch)  # True
 | `src/ksae_2026_autumn/control.py` | 명령 지연과 전환 판단 함수 |
 | `src/ksae_2026_autumn/evaluation.py` | 위반 판정, 결과 분류, 지표 집계 |
 | `src/ksae_2026_autumn/tfpp.py` | Garage 평가기 실행과 결과 경로 관리 |
+| `src/ksae_2026_autumn/logging_agent.py` | TransFuser++에 로깅을 연결하는 agent |
+| `src/ksae_2026_autumn/telemetry.py` | 프레임별 상태·명령 기록과 route 집계 |
+| `src/ksae_2026_autumn/telemetry_runtime.py` | 평가기의 route 수명 주기와 제어 제출 지점 연결 |
+| `src/ksae_2026_autumn/telemetry_cli.py` | 로깅 실행 옵션, 외부 경로, 실행 정보 관리 |
+| `src/ksae_2026_autumn/telemetry_check.py` | 저장된 로그의 구조 검사 |
 | `tools/` | 실행·결과 처리 명령 |
 | `tests/` | 자동 검사 |
 
@@ -271,7 +375,9 @@ print(switch)  # True
 | Docker socket의 `permission denied` | [Docker 사용자 권한 설정](https://docs.docker.com/engine/install/linux-postinstall/) 확인 |
 | 환경변수 또는 파일 경로 오류 | `configs/tfpp.yaml`과 호스트의 export 경로 확인 |
 | `.pth` 개수 오류 | 모델 폴더에 `config.json`과 사용할 가중치 한 개만 배치 |
-| 출력 경로가 이미 존재함 | TF++은 `--output-dir`, 결과 집계는 `--output`에 새 경로 지정 |
+| 출력 경로가 이미 존재함 | 기본 TF++은 `--output-dir`, 텔레메트리와 결과 집계는 `--output`에 새 경로 지정 |
+| `Unsupported Garage file` | 위의 지원 commit과 핵심 파일 일치 여부 확인 |
+| B2D에서 CARLA 포트 사용 중 | 기존 서버를 종료하고 새 출력 경로로 재실행 |
 | CARLA 연결 timeout | 서버 실행 여부, 설정한 RPC 포트, 맵 로딩 상태 확인 |
 | `CUDA available: False` 또는 GPU 실행 오류 | 호스트의 `nvidia-smi`와 Container Toolkit 설정 확인 |
 
