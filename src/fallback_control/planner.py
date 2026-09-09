@@ -80,8 +80,8 @@ class LocalPlanner:
                     contact = samples[first]
                     if first:
                         # Interpolate the signed clearance across its first zero.
-                        # Selecting the first blocked sample made the stop station
-                        # jump by one ~0.3 m cell as the ego-relative grid advanced.
+                        # Interpolation avoids ~0.3 m stop-station jumps between cells
+                        # as the ego-relative sampling grid advances.
                         # A 1 cm upstream pad is conservative; the MPC still checks
                         # the full geometric obstacle constraints independently.
                         before = clearance[first - 1] - radii[first - 1]

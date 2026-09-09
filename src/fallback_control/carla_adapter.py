@@ -1,4 +1,4 @@
-"""CARLA 0.9.15 privileged research adapter; never calls world.tick/apply_control.
+"""CARLA 0.9.15 ground-truth adapter; never calls world.tick/apply_control.
 
 All controller coordinates are RH: (x_CARLA, -y_CARLA, -yaw_CARLA).
 Use the full route passed to set_global_plan BEFORE Garage downsamples it.
@@ -220,8 +220,8 @@ class CarlaFallback:
                 + 5
             )
             # The planner looks at least 40 m ahead, even at zero speed.
-            # Shrinking this range while braking used to remove the very actor
-            # that caused the stop, creating repeated acceleration/braking cycles.
+            # Keep the stopping obstacle in range while braking to avoid
+            # repeated acceleration/braking cycles as ego speed decreases.
             reach = max(reach, 40.0 + self.geometry.front + radius)
             if dist > reach:
                 continue

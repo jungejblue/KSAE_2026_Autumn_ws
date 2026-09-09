@@ -1,4 +1,4 @@
-"""Propagate evaluator and recorder failures without a separate audit workflow."""
+"""Propagate evaluator and recorder failures to the caller."""
 
 import json
 from pathlib import Path

@@ -68,7 +68,7 @@ class LongitudinalActuator:
         brake = float(np.clip(-effort / c.brake_gain, 0.0, 0.25))
         # Production takes the mode of the selected, constraint-checked rollout.
         # A speed threshold must not independently cancel it after a rebound.
-        # Legacy callers without a rollout flag use latched planned-stop mode.
+        # Calls without a rollout flag use latched planned-stop mode.
         if coast_requested is None:
             terminal_stop = bool(stop_requested and request < 0 and not urgent_brake and (
                 self.coast_active or speed < c.terminal_coast_speed))
