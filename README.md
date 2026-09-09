@@ -1,6 +1,6 @@
 # KSAE_2026_Autumn_ws
 
-**CARLA에서 TransFuser++를 실행하고, 주행 제어 결과를 비교·집계하는 Python 도구 모음입니다.**
+**CARLA에서 TransFuser++를 실행하고, 주행 기록에서 안전 지표를 계산하고 제어 결과를 비교·집계하는 Python 도구 모음입니다.**
 
 | 기능 | 사용 방법 | 출력 |
 |---|---|---|
@@ -8,6 +8,7 @@
 | TransFuser++ 주행 실행 | `tools/run_tfpp.py`에 설정 YAML 입력 | CARLA Garage 평가 결과와 실행 정보 |
 | 주행 시계열 기록 | `tools/run_telemetry.py run` | 센서 프레임, 차량 상태, 제어 명령 JSONL |
 | 충돌·이탈 기록 | `tools/run_violations.py run` | 바퀴 참조점, 충돌 이벤트, 위반 결과 |
+| 오프라인 안전 지표 추출 | `tools/extract_safety_metrics.py --input … --output …` | TTC·TTLC·충돌 직전 속도 CSV |
 | 제어 명령 지연·전환 판단 | Python에서 `control.py` 함수 사용 | 지연된 명령 또는 전환 여부 |
 
 결과 비교와 제어 유틸리티는 Python 3.10만으로 사용할 수 있습니다.
@@ -368,6 +369,86 @@ route ID는 XML에 있는 값으로 선택합니다. 출력 폴더는 매번 새
 구간을 선택하고 충돌·이탈을 집계하여 앞의 `pairs.json` 형식으로 준비해야 합니다.
 이 저장소는 현재 자동 쌍대 재실행이나 안전 제어기 전환까지 실행하지 않습니다.
 
+## 기록된 주행에서 안전 지표 추출
+
+`extract_safety_metrics.py`는 `run_violations.py run`으로 저장한 주행 기록에서
+TTC, TTLC, 충돌 직전 속도 대푯값을 계산합니다. 이 과정은 Python 3.10과 저장된
+입력 파일만 사용하며, CARLA 서버·Garage·GPU를 실행할 필요가 없습니다.
+일반 `run_tfpp.py` 또는 `run_telemetry.py` 출력만으로는 필요한 위반 기록이 부족합니다.
+
+### 입력 폴더 선택
+
+앞의 위반 검출 실행에서 지정한 출력 폴더를 `--input`으로 전달합니다.
+해당 폴더 바로 아래에 `routes/<route_id>/`가 있어야 하며, 각 route에는 다음 파일이 필요합니다.
+
+- `ticks.jsonl`, `violations.jsonl`, `collision_events.jsonl`
+- `corridor.json`, `detector_config.json`, `violation_summary.json`
+
+입력은 스키마 버전 2, 지원되는 MKZ 2020 고정 바퀴 프로필, 연속된 0.05초 프레임,
+유효한 관측 범위, 오류 없이 종료된 검출 세션이어야 합니다. 실행에 필요한 입력 정합성
+검사는 유지되며, 조건이 맞지 않으면 원인을 출력하고 중단합니다.
+
+### 추출 실행
+
+저장소 루트에서 Python 환경을 활성화한 뒤 실행합니다. 아래 입력 경로를 실제 위반
+기록 폴더로 바꾸세요. Docker에서 생성한 기록도 호스트의 출력 경로로 읽을 수 있습니다.
+
+```bash
+python tools/extract_safety_metrics.py \
+  --input "$HOME/carla_outputs/violations_local_001" \
+  --output "$HOME/carla_outputs/safety_metrics_001"
+```
+
+| 옵션 | 의미 |
+|---|---|
+| `--input` | `routes/`가 바로 들어 있는 실행 폴더. 필수 |
+| `--output` | 아직 존재하지 않는 결과 폴더. 입력 폴더 내부는 사용할 수 없음. 필수 |
+| `--help` | 사용법 출력 |
+
+이 명령에는 `run` 하위 명령이 없습니다. 상위 실험 폴더나 개별 route 폴더를 입력하지
+마세요. 특정 이름의 하위 폴더를 자동으로 선택하지 않으며, 입력의 `routes/*/ticks.jsonl`로
+발견되는 모든 route를 처리합니다. 다시 추출할 때는 새로운 출력 경로를 사용합니다.
+
+### 출력과 해석
+
+| 출력 폴더 내 경로 | 내용 |
+|---|---|
+| `analysis.json` | 처리 상태, 입력·코드 hash, 예측 범위와 계산 가정 |
+| `summary.json` | route별 요약 목록 |
+| `routes/<route_id>/metrics.csv` | 프레임별 TTC·TTLC, 상태, 충돌·이탈 여부 |
+| `routes/<route_id>/collision_speeds.csv` | 충돌 이벤트별 직전 프레임 속도와 접촉 episode |
+| `routes/<route_id>/summary.json` | 최솟값, 상태별 개수, 충돌 개수·요약 |
+| `inputs/<route_id>/` | 계산에 사용한 입력 6개 파일의 사본 |
+
+- **TTC**: 기록된 차량·보행자가 현재 전역 속도와 자세를 유지할 때 bounding box의
+  XY 투영과 수직 범위가 겹치기까지의 시간입니다. 정적 지도 물체는 대상에서 제외됩니다.
+- **TTLC**: 현재 전역 속도·자세로 이동할 때 고정 바퀴 참조점 중 하나가 허용 영역을
+  처음 벗어나는 샘플 시점입니다. 이미 밖에 있으면 0초입니다.
+- **충돌 직전 속도**: 충돌 이벤트 직전 프레임의 ego 속도입니다. 0.05초 전의 대푯값이며
+  실제 접촉 순간 속도가 아닙니다. 직전 프레임이 없으면 계산 불가로 표시합니다.
+
+CLI의 예측 범위는 3.0초, TTLC 샘플 간격은 0.05초로 고정되어 있습니다.
+현재 제어 명령이나 이후 제어 변화는 예측에 반영하지 않습니다.
+JSON의 `null`과 CSV의 빈 값은 0이 아닙니다. 반드시 상태 필드와 함께 해석하세요.
+
+| 상태 값 | 의미 |
+|---|---|
+| `no_overlap_within_horizon` | 예측 범위 내 겹침 없음 |
+| `unknown_actor_state` | 누락된 actor 상태로 TTC를 결정할 수 없음 |
+| `no_exit_on_prediction_grid` | 예측 샘플에서 이탈 없음 |
+| `route_endpoint_censored` | route 끝을 넘어 TTLC 판단이 제한됨 |
+| `missing_previous_frame` | 충돌 직전 속도를 계산할 프레임 없음 |
+
+`analysis.json`의 `PASS`는 추출 완료 및 코드가 정의한 결측 문제 없음이라는 뜻입니다.
+무충돌·무이탈이나 예측 정확도를 보증하지 않습니다. `REVIEW`는 TTC actor 상태 또는
+충돌 직전 속도에 결측 문제가 있다는 뜻이며 route 요약의 `issues`를 확인합니다.
+`PASS`는 종료 코드 0, `REVIEW`와 처리 오류는 0이 아닌 종료 코드를 반환합니다.
+출력 생성 후 계산 중 오류가 나면 `analysis.json`에 `FAIL`과 오류를 기록합니다.
+입력·출력 사전 검사에서 중단되면 이 파일이 생성되지 않을 수 있습니다.
+
+전체 입력 사본과 결과는 저장소 밖에 보관합니다. 이 CSV는 `evaluate_pairs.py`의
+입력 JSON과 다르며 자동으로 제어 전환이나 쌍대 재실행을 수행하지 않습니다.
+
 ## Python에서 제어 유틸리티 사용
 
 `ActionDelayFIFO`는 입력 명령을 지정한 호출 횟수만큼 늦춰 반환합니다.
@@ -419,6 +500,9 @@ print(switch)  # True
 | `src/ksae_2026_autumn/violation_runtime.py` | 주행 중 검출 및 저장 |
 | `src/ksae_2026_autumn/violation_launcher.py` | 위반 검출 주행 실행 |
 | `src/ksae_2026_autumn/run_status.py` | 실행 종료 오류 전달 |
+| `src/ksae_2026_autumn/safety_metrics.py` | TTC·TTLC·충돌 직전 속도 계산 |
+| `src/ksae_2026_autumn/safety_metrics_io.py` | 기록 입력, 정합성 검사, CSV·JSON 출력 |
+| `tools/extract_safety_metrics.py` | 오프라인 안전 지표 추출 명령 |
 | `tools/` | 실행·결과 처리 명령 |
 
 ## 문제 해결 및 코드 검사
