@@ -10,6 +10,7 @@
 | 충돌·이탈 기록 | `tools/run_violations.py run` | 바퀴 참조점, 충돌 이벤트, 위반 결과 |
 | E2E 제어 명령 지연 주입 | `tools/run_violations.py run --delay-ms …` | 지연된 명령 제출과 프레임별 지연 기록 |
 | 오프라인 안전 지표 추출 | `tools/extract_safety_metrics.py --input … --output …` | TTC·TTLC·충돌 직전 속도 CSV |
+| 규칙 기반 fallback 제어 | `fallback_control` Python API | 가속도·조향각 또는 CARLA VehicleControl |
 | 제어 명령 지연·전환 판단 | Python에서 `control.py` 함수 사용 | 지연된 명령 또는 전환 여부 |
 
 결과 비교와 제어 유틸리티는 Python 3.10만으로 사용할 수 있습니다.
@@ -558,6 +559,123 @@ JSON의 `null`과 CSV의 빈 값은 0이 아닙니다. 반드시 상태 필드�
 전체 입력 사본과 결과는 저장소 밖에 보관합니다. 이 CSV는 `evaluate_pairs.py`의
 입력 JSON과 다르며 자동으로 제어 전환이나 쌍대 재실행을 수행하지 않습니다.
 
+## 규칙 기반 fallback 제어기
+
+`fallback_control`은 로컬 경로 후보 생성, CBF·CLF 조건을 사용하는 MPC, CARLA 제어 명령
+변환을 제공하는 Python 라이브러리입니다. 기본 `sampled` backend는 NumPy로 후보를 계산합니다.
+CARLA adapter는 차량·보행자·신호등 등의 시뮬레이터 정답 상태를 사용합니다.
+TF++와의 전환 판단·동시 실행이나 쌍대 재실행은 이 라이브러리에 자동 연결되어 있지 않습니다.
+
+### 설치와 설정
+
+저장소 루트의 Python 3.10 환경에서 실행합니다. CARLA를 사용하지 않는 제어 계산에도
+NumPy가 필요합니다. 이 옵션은 주행에 사용한 NumPy 버전을 설치합니다.
+
+```bash
+python -m pip install -e '.[fallback]'
+```
+
+`configs/fallback.json`은 기본 sampled 제어 설정입니다. JSON에 없는 값은 `Config`의
+기본값을 사용합니다. 차량·노면이 달라지면 설정의 적합성을 별도로 평가해야 합니다.
+
+| 설정 | 기본 배포값과 의미 |
+|---|---|
+| `backend` | `sampled`. 제한된 후보 집합에서 제약과 비용을 평가 |
+| `control_dt` | 0.05초. CARLA 제어 tick과 일치해야 함 |
+| `dt`, `horizon` | 예측 간격 0.15초, horizon 20. 예측 시간 격자는 `Config.times` 확인 |
+| `solver_budget_s` | 0.045초. solver의 처리 예산 |
+| `enforce_tick_deadline` | `true`. 반환 뒤 시간 초과를 검출하면 비상 명령으로 전환 |
+| `max_obstacles` | 6. 초과 시 장애물을 조용히 버리지 않고 비상 명령 반환 |
+| `terminal_coast_speed` | 2.0m/s. 일반 저속 감속의 타력 모드 진입 기준 |
+| `terminal_coast_decel` | 0.2m/s². 타력 거리 예측에 사용하는 임시 감속 모델 |
+
+선택적인 `ipopt` backend는 `mpc.py`에 남아 있습니다. 이를 사용하려면
+`python -m pip install -e '.[ipopt]'` 후 설정의 `backend`를 `ipopt`로 바꿉니다.
+CasADi/Ipopt는 기본 sampled 실행에 필요하지 않습니다. 아래 주행 검증 범위와 처리 시간은
+sampled backend에 해당하며 Ipopt에 그대로 적용할 수 없습니다.
+
+### CARLA 없이 제어 명령 계산
+
+다음 예시는 합성 직선 경로와 차량 형상으로 명령을 한 번 계산합니다. 실제 CARLA 주행이나
+완료 검사 명령이 아닙니다. 이 API로 사용자 실행기에 제어기를 연결할 수 있습니다.
+
+```bash
+python - <<'PY'
+import json
+from pathlib import Path
+
+import numpy as np
+from fallback_control import Config, EgoState, FallbackController, Geometry, Route
+
+config = Config(**json.loads(Path("configs/fallback.json").read_text()))
+xy = np.column_stack((np.linspace(0.0, 150.0, 301), np.zeros(301)))
+route = Route(xy, np.full(301, 3.6))
+geometry = Geometry(
+    wheelbase=2.85, rear_axle_x=-1.4,
+    front=3.8, rear=1.0, half_width=0.95, max_steer=0.6,
+    wheels=((0.0, -0.8), (0.0, 0.8), (2.85, -0.8), (2.85, 0.8)),
+)
+controller = FallbackController(route, geometry, config)
+command = controller.step(EgoState(x=5.0, y=0.2, yaw=0.0, speed=3.0), [], speed_limit=3.0)
+print(command)
+PY
+```
+
+코어의 좌표는 오른손 XY, yaw·steer는 rad, 길이는 m, 속도는 m/s입니다. ego 위치는
+후륜축 중심입니다. `Geometry.wheels`는 후륜축 기준 고정 바퀴 중심 좌표이며, 예시 형상을
+실제 MKZ 측정값으로 사용하지 마세요. 실제 CARLA에서는 adapter가 차량 형상을 구성합니다.
+`Command`에는 가속도, 조향각, 목표 속도, `emergency`, 진단 정보가 담깁니다.
+직접 연결하는 실행기는 `emergency`를 반드시 처리해야 합니다.
+
+### CARLA 실행기에 연결
+
+CARLA 0.9.15의 `vehicle.lincoln.mkz_2020`과 동기식 0.05초 간격을 사용합니다.
+다음은 **이미 차량과 전체 경로를 준비한 실행기 안에 삽입하는 코드**입니다.
+
+```python
+import json
+from pathlib import Path
+
+from fallback_control import Config
+from fallback_control.carla_adapter import CarlaFallback
+
+config = Config(**json.loads(Path("configs/fallback.json").read_text()))
+fallback = CarlaFallback(ego_vehicle, full_world_plan, config=config)
+
+# 실행기의 각 제어 tick에서 현재 snapshot을 전달합니다.
+control = fallback.run_step(world.get_snapshot())
+ego_vehicle.apply_control(control)
+# world.tick() 호출은 기존 실행기가 한 번만 수행합니다.
+```
+
+- `ego_vehicle`: 실행기가 생성한 CARLA Vehicle. autopilot 또는 다른 제어기가 동시에
+  같은 차량에 명령을 제출하지 않도록 실행기에서 제어권을 관리합니다.
+- `full_world_plan`: `(carla.Transform, command)` 목록. 최소 3개 지점이 필요합니다.
+  차선 중심을 따르는 연속된 전체 경로를 사용하며 지점 간 간격은 3m 이하여야 합니다.
+  Garage에서는 downsample되기 전 `set_global_plan`의 전체 world 경로를 보존합니다.
+- `run_step`: 제어 명령을 반환합니다. adapter 자체는 `world.tick()` 또는
+  `apply_control()`을 호출하지 않습니다. 같은 프레임을 재호출하면 이전 반환값을 사용합니다.
+- 경로·world·ego가 바뀌면 새 `CarlaFallback`을 생성합니다. `FallbackController.reset()`은
+  코어 상태 초기화이며 adapter 전체나 CARLA world 복원을 대신하지 않습니다.
+
+이 라이브러리는 별도 CARLA 서버 시작, 차량 spawn, route 선택 실행기를 제공하지 않습니다.
+기존 `run_tfpp.py`·`run_violations.py`는 자동으로 이 제어기를 사용하지 않습니다.
+차선 변경 경로, 역주행, 급경사 등 지원하지 않는 조건은 adapter에서 거부합니다.
+맵 구조물 중 actor로 제공되지 않는 물체는 자동으로 모두 관측되는 것이 아니므로 필요한
+정적 장애물은 `extra_static_obstacles`에 같은 오른손 좌표계의 `Obstacle` 목록으로 전달합니다.
+
+### 동작 범위와 해석
+
+확인된 CARLA 단독 주행 범위는 Town01의 저속 직선·곡선·좌우 경로 복귀·정적 차량·횡단
+보행자 조건입니다. 다른 맵·노면·속도, TF++ 병행 실행 및 전환 성능까지 보장하지 않습니다.
+이미 영역 밖에서 시작한 복귀 시나리오는 이탈 기록이 남아도 복귀 동작의 성공을 별도로
+판정할 수 있습니다. 이는 충돌 OR 영역 이탈이라는 위반 정의를 바꾸는 것이 아닙니다.
+
+시간 제한 처리는 연산이 반환된 뒤 초과 여부를 판단하는 방식입니다. 50ms 이내 실행을
+강제로 선점·보장하는 기능이 아닙니다. CBF·CLF 조건도 후보 집합·예측 모델·관측 범위에
+의존하며 실제 폐루프 안전이나 안정성을 무조건 증명하지 않습니다.
+정합성 검증과 `diagnostics`는 런타임 동작의 일부이므로 유지합니다.
+
 ## Python에서 제어 유틸리티 사용
 
 `ActionDelayFIFO`는 입력 명령을 지정한 호출 횟수만큼 늦춰 반환하는 기본 유틸리티입니다.
@@ -596,7 +714,8 @@ print(switch)  # True
 
 | 위치 | 역할 |
 |---|---|
-| `configs/` | 실행 설정과 결과 입력 예제 |
+| `configs/` | 실행 설정, 결과 입력 예제, fallback.json 제어 설정 |
+| `src/fallback_control/` | fallback 제어 코어와 CARLA adapter. 아래 파일별 설명 참조 |
 | `src/ksae_2026_autumn/control.py` | 명령 지연과 전환 판단 함수 |
 | `src/ksae_2026_autumn/evaluation.py` | 위반 판정, 결과 분류, 지표 집계 |
 | `src/ksae_2026_autumn/tfpp.py` | Garage 평가기 실행과 결과 경로 관리 |
@@ -616,6 +735,20 @@ print(switch)  # True
 | `src/ksae_2026_autumn/safety_metrics_io.py` | 기록 입력, 정합성 검사, CSV·JSON 출력 |
 | `tools/extract_safety_metrics.py` | 오프라인 안전 지표 추출 명령 |
 | `tools/` | 실행·결과 처리 명령 |
+
+### fallback_control 파일별 역할
+
+| 파일 | 역할 |
+|---|---|
+| `__init__.py`, `types.py` | 공개 API, 설정과 입출력 자료형 |
+| `controller.py` | planner·MPC 연결과 명령·비상 상태 반환 |
+| `planner.py`, `route.py` | 로컬 경로 후보·속도 계획, 경로 투영과 영역 계산 |
+| `sampling_mpc.py` | 기본 sampled backend의 예측·제약·비용 평가 |
+| `mpc.py` | 선택적 CasADi/Ipopt backend |
+| `actuation.py` | 가속도 목표를 throttle/brake로 변환, 저속 타력 모드 |
+| `steering.py` | 실제 바퀴 조향각과 정규화 제어량 변환 |
+| `recovery.py` | 영역 밖 초기 상태의 복귀 허용 범위 계산 |
+| `carla_adapter.py` | CARLA 좌표·관측·차량 형상·신호등과 제어 API 연결 |
 
 ## 문제 해결 및 코드 검사
 

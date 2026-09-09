@@ -12,6 +12,8 @@ dependencies = ["PyYAML>=6.0,<7.0"]
 
 [project.optional-dependencies]
 dev = ["ruff==0.16.6"]
+fallback = ["numpy==1.26.4"]
+ipopt = ["numpy==1.26.4", "casadi>=3.6,<4"]
 
 [tool.setuptools.packages.find]
 where = ["src"]
