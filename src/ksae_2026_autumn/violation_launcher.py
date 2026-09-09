@@ -1,4 +1,4 @@
-"""Launch and verify TF++ telemetry runs."""
+"""Run TransFuser++ with telemetry and collision/route-departure recording."""
 
 import argparse
 import hashlib
@@ -128,7 +128,7 @@ def prepare(args):
         if value != SUPPORTED[relative]:
             raise ValueError(
                 f"Unsupported Garage file: {relative}\nExpected source from {GARAGE_COMMIT}; "
-                "Use the supported Garage checkout for this telemetry adapter."
+                "Use the supported Garage checkout for this adapter."
             )
         hashes[relative] = value
     route_elements = ET.parse(routes).getroot().findall("route")
@@ -156,11 +156,14 @@ def prepare(args):
 
 
 def run(args):
+    if args.logging != "on":
+        raise ValueError("Violation recording requires logging on")
     if sys.version_info[:2] != (3, 10):
         raise RuntimeError("Use Python 3.10 with CARLA Garage dependencies installed")
     garage, carla, model, base, evaluator, routes, weight, selected, hashes = prepare(args)
     output = Path(args.output).expanduser().resolve()
     # Refuse to mix an earlier execution into this one, even when it failed.
+    source_hashes = implementation_hashes()
     output.mkdir(parents=True, exist_ok=False)
     env = os.environ.copy()
     env.update(CONTROL_ENV)
@@ -228,7 +231,7 @@ def run(args):
         sys.executable,
         "-u",
         "-m",
-        "ksae_2026_autumn.telemetry_runtime",
+        "ksae_2026_autumn.violation_runtime",
         str(evaluator),
         *arguments,
     ]
@@ -251,7 +254,7 @@ def run(args):
         "config_sha256": sha256(model / "config.json"),
         "routes_sha256": sha256(routes),
         "garage_source_hashes": hashes,
-        "implementation_hashes": implementation_hashes(),
+        "implementation_hashes": source_hashes,
         "control_environment": CONTROL_ENV,
         "pythonpath": env["PYTHONPATH"],
         "cuda_visible_devices": env["CUDA_VISIBLE_DEVICES"],
@@ -330,7 +333,7 @@ def run(args):
     if code != 0:
         return code if code > 0 else 1
     try:
-        require_finished(output, meta["expected_route_ids"], violations=False)
+        require_finished(output, meta["expected_route_ids"], violations=True)
     except (OSError, ValueError, RuntimeError, KeyError, TypeError) as error:
         latest = json.loads((output / "run.json").read_text())
         latest.update(completion_error=str(error), launcher_exit_code=1)
@@ -357,7 +360,7 @@ def main():
     )
     run_parser.add_argument("--model", default=os.environ.get("TFPP_MODEL"))
     run_parser.add_argument("--evaluator", choices=["b2d", "local"], default="b2d")
-    run_parser.add_argument("--logging", choices=["on", "off"], default="on")
+    run_parser.add_argument("--logging", choices=["on"], default="on")
     run_parser.add_argument("--routes-subset", default="")
     run_parser.add_argument("--routes")
     run_parser.add_argument("--output", required=True)
@@ -369,10 +372,9 @@ def main():
     run_parser.add_argument("--timeout", type=float, default=600)
     args = parser.parse_args()
     try:
-        if args.action == "run":
-            if not args.model:
-                parser.error("set TFPP_MODEL or pass --model")
-            return run(args)
+        if not args.model:
+            parser.error("set TFPP_MODEL or pass --model")
+        return run(args)
     except (OSError, ValueError, RuntimeError) as error:
         print(f"ERROR: {error}", file=sys.stderr)
         return 2

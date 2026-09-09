@@ -29,3 +29,5 @@ Engine/
 *.tar
 *.tar.gz
 .DS_Store
+
+.venv-docker/

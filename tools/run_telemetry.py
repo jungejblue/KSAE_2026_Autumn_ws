@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""TF++ telemetry run and self-test entry point."""
+"""TF++ telemetry execution entry point."""
 
 import sys
 from pathlib import Path

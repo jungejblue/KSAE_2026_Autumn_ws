@@ -7,7 +7,7 @@
 | 두 제어 모드의 결과 비교 | `tools/evaluate_pairs.py`에 결과 JSON 입력 | 결과 분류, 혼동행렬, precision/recall |
 | TransFuser++ 주행 실행 | `tools/run_tfpp.py`에 설정 YAML 입력 | CARLA Garage 평가 결과와 실행 정보 |
 | 주행 시계열 기록 | `tools/run_telemetry.py run` | 센서 프레임, 차량 상태, 제어 명령 JSONL |
-| 저장된 로그 검사 | `tools/check_telemetry.py`에 실행 폴더 입력 | 누락·불일치 검사 결과 JSON |
+| 충돌·이탈 기록 | `tools/run_violations.py run` | 바퀴 참조점, 충돌 이벤트, 위반 결과 |
 | 제어 명령 지연·전환 판단 | Python에서 `control.py` 함수 사용 | 지연된 명령 또는 전환 여부 |
 
 결과 비교와 제어 유틸리티는 Python 3.10만으로 사용할 수 있습니다.
@@ -220,7 +220,7 @@ python tools/run_tfpp.py --config configs/tfpp.yaml --output-dir /outputs/tfpp_r
 `result.json`이 생성됐는지만 확인하지 말고 그 안의 route 상태와 완주·위반 결과를 확인하세요.
 컨테이너는 `exit`, CARLA 서버는 실행 터미널에서 `Ctrl+C`로 종료합니다. 연결한 결과 파일은 유지됩니다.
 
-## 주행 시계열 기록과 검사
+## 주행 시계열 기록
 
 `run_tfpp.py`는 YAML 기반 기본 평가 실행기입니다. 프레임별 상태와 제어 명령까지
 필요하면 `run_telemetry.py run`을 사용합니다. 두 명령을 동시에 실행하지 마세요.
@@ -278,7 +278,6 @@ python tools/run_telemetry.py run \
 | `routes/<route_id>/route.json` | route 식별자, 센서 구성, 시뮬레이션 설정 |
 | `routes/<route_id>/ticks.jsonl` | 프레임별 상태·센서 프레임·제어 명령·처리 시간 |
 | `routes/<route_id>/summary.json` | 호출·행 개수, 시간 통계, 로거 종료 상태 |
-| `telemetry_check.json` | 실행 후 자동으로 수행하는 구조 검사 결과 |
 | `source/` | 실행에 사용한 코드·route·모델 설정 사본과 Git 상태 |
 
 `--logging off`는 프레임별 JSONL 기록을 끄고 호출 집계와 실행 정보를 남깁니다.
@@ -292,30 +291,82 @@ Garage의 핵심 소스 hash가 지원 버전과 다르면 실행을 중단합�
 확인하는 신호는 아닙니다. `control.py`의 지연·전환 함수는 이 실행기에 자동 연결되지 않습니다.
 실행기는 `telemetry_cli.py`의 `CONTROL_ENV` 값을 적용하며 실제 값을 `run.json`에 남깁니다.
 
-### 저장된 로그 다시 검사
+## 충돌·주행 영역 이탈 기록
 
-CARLA와 GPU 없이 실행할 수 있습니다.
+`run_violations.py run`은 TF++ 주행에 텔레메트리와 위반 검출을 함께 연결합니다.
+현재 지원 차량은 `vehicle.lincoln.mkz_2020`이며 동기식 0.05초 간격으로 실행합니다.
+모델 폴더와 Garage 버전은 위의 TF++ 실행 조건과 같습니다.
+
+### Local 평가
+
+호스트에서 CARLA 서버를 먼저 시작한 뒤, 주행용 Python 환경의 저장소 루트에서 실행합니다.
+기존 Docker 도구는 local 평가에 사용할 수 있습니다.
 
 ```bash
-python tools/check_telemetry.py "$EXPERIMENT_OUTPUT_ROOT/telemetry_local_001"
+python tools/run_violations.py run \
+  --evaluator local \
+  --garage "$CARLA_GARAGE_ROOT" --carla "$CARLA_ROOT" \
+  --model "$TFPP_MODEL" \
+  --routes "$CARLA_GARAGE_ROOT/leaderboard/data/debug.xml" \
+  --seed 100 --gpu 0 \
+  --output "$EXPERIMENT_OUTPUT_ROOT/violations_local_001"
 ```
 
-| 상태 | 의미 |
+### Bench2Drive 평가
+
+기존 CARLA 서버를 종료한 뒤 전체 CARLA 설치와 Garage 의존성이 있는 호스트
+Python 3.10 환경에서 실행합니다. 현재 Docker 도구는 CARLA 서버 전체를 연결하지 않습니다.
+
+```bash
+python tools/run_violations.py run \
+  --evaluator b2d \
+  --garage "$CARLA_GARAGE_ROOT" --carla "$CARLA_ROOT" \
+  --model "$TFPP_MODEL" \
+  --routes "$CARLA_GARAGE_ROOT/Bench2Drive/leaderboard/data/bench2drive220.xml" \
+  --routes-subset 24211 --seed 100 --gpu 0 \
+  --output "$EXPERIMENT_OUTPUT_ROOT/violations_b2d_001"
+```
+
+route ID는 XML에 있는 값으로 선택합니다. 출력 폴더는 매번 새 경로여야 합니다.
+위반 검출에는 차량 상태가 필요하므로 로깅은 항상 켜져 있습니다.
+전체 옵션: `python tools/run_violations.py run --help`.
+
+### 판정 기준과 출력
+
+평가기의 route를 따라 차선 가장자리를 연결한 고정 영역을 구성하고, MKZ 2020의
+차량 기준 바퀴 중심 참조점 4개를 차량 자세로 월드 좌표에 변환합니다.
+하나라도 영역 밖에 있으면 이탈로 판정합니다. 경계 위의 점은 내부로 취급합니다.
+이는 실제 타이어 접지면·타이어 외곽을 측정하는 방식이 아닙니다.
+교차로·차선 변경·지도 샘플링에 따라 영역 표현에 한계가 있으므로 모든 도로 형상에서
+정확한 판정을 보장하지 않습니다. 다른 차량에는 새로운 바퀴 프로필이 필요합니다.
+
+충돌은 collision sensor의 원본 이벤트 프레임에 결합하며, 충돌 또는 이탈 중 하나가
+참이면 위반입니다. 센서 관측 전 구간이나 유효하지 않은 관측은 안전으로 간주하지 않습니다.
+이벤트 수신 종료 시 대기 시간은 0.25초이며, 모든 콜백 전달을 증명하는 신호는 아닙니다.
+
+기본 텔레메트리 파일에 더해 `routes/<route_id>/`에 다음을 저장합니다.
+
+| 파일 | 내용 |
 |---|---|
-| `PASS` | 구현된 구조 검사에서 오류·경고 없음 |
-| `REVIEW` | 구조 오류는 없지만 주행 결과나 관측값 차이 등 확인할 경고가 있음 |
-| `FAIL` | 실행 미완료, 프레임 누락, 제어 값 불일치 등 오류가 있음 |
+| `detector_config.json` | 차량 프로필, 좌표·판정 기준, 센서 관측 범위 |
+| `corridor.json` | route로 만든 허용 영역 |
+| `wheel_observations.jsonl` | 프레임별 차량 상태·바퀴 참조점·이탈 여부 |
+| `collision_events.jsonl` | 원본 충돌 이벤트 |
+| `violations.jsonl` | 충돌과 이탈을 결합한 프레임별 결과 |
+| `violation_summary.json` | 종료 상태·오류·충돌 개수·위반 누적 여부 |
 
-검사 명령의 종료 코드는 `PASS`/`REVIEW`에서 0, `FAIL`에서 1입니다.
-`PASS`는 안전한 주행이나 동일 궤적 재현을 보장하지 않습니다.
-이 로그를 `evaluate_pairs.py`에 직접 입력할 수는 없습니다. 비교할 실행 구간과 위반을
-판정하여 앞의 `pairs.json` 형식으로 준비해야 합니다.
+`violation_at_frame`은 해당 프레임, `violation_seen`은 시작 이후 누적 위반 여부입니다.
+`true`는 위반, `false`는 관측된 범위에서 위반 없음, `null`은 판정 불가입니다.
+`coverage_valid`도 함께 확인하세요. 실행 성공은 무충돌·무이탈을 의미하지 않습니다.
 
-로깅 단위 테스트만 실행하고 결과를 저장하려면 다음 명령을 사용합니다.
+실행기는 요청 route의 완료와 로거·검출기의 종료 오류를 확인하고 실패 시 0이 아닌 코드를
+반환합니다. 별도 중간 검토 보고서는 만들지 않습니다. 원본 평가기 종료 코드는
+`exit_code.txt`에 남으며, 종료 상태 처리 오류는 `run.json`의 `completion_error`에 남습니다.
+로그 전체의 의미적 정합성을 자동 보증하는 기능은 아닙니다.
 
-```bash
-python tools/run_telemetry.py self-test --output "$EXPERIMENT_OUTPUT_ROOT/telemetry_tests"
-```
+위반 로그는 `evaluate_pairs.py` 입력과 다릅니다. 동일 조건에서 비교할 두 실행의 평가
+구간을 선택하고 충돌·이탈을 집계하여 앞의 `pairs.json` 형식으로 준비해야 합니다.
+이 저장소는 현재 자동 쌍대 재실행이나 안전 제어기 전환까지 실행하지 않습니다.
 
 ## Python에서 제어 유틸리티 사용
 
@@ -362,9 +413,13 @@ print(switch)  # True
 | `src/ksae_2026_autumn/telemetry.py` | 프레임별 상태·명령 기록과 route 집계 |
 | `src/ksae_2026_autumn/telemetry_runtime.py` | 평가기의 route 수명 주기와 제어 제출 지점 연결 |
 | `src/ksae_2026_autumn/telemetry_cli.py` | 로깅 실행 옵션, 외부 경로, 실행 정보 관리 |
-| `src/ksae_2026_autumn/telemetry_check.py` | 저장된 로그의 구조 검사 |
+| `src/ksae_2026_autumn/route_corridor.py` | route 기반 허용 영역 |
+| `src/ksae_2026_autumn/violation_geometry.py` | MKZ 바퀴 참조점 좌표 변환 |
+| `src/ksae_2026_autumn/violations.py` | 충돌·이탈 결합 |
+| `src/ksae_2026_autumn/violation_runtime.py` | 주행 중 검출 및 저장 |
+| `src/ksae_2026_autumn/violation_launcher.py` | 위반 검출 주행 실행 |
+| `src/ksae_2026_autumn/run_status.py` | 실행 종료 오류 전달 |
 | `tools/` | 실행·결과 처리 명령 |
-| `tests/` | 자동 검사 |
 
 ## 문제 해결 및 코드 검사
 
@@ -386,6 +441,5 @@ print(switch)  # True
 ```bash
 python -m pip install -e '.[dev]'
 python -m ruff check .
-python -m unittest discover -s tests -v
 bash -n tools/docker.sh
 ```
