@@ -14,6 +14,7 @@ import xml.etree.ElementTree as ET
 from datetime import datetime, timezone
 from pathlib import Path
 
+from ksae_2026_autumn.action_delay import DelayConfig
 from ksae_2026_autumn.run_status import require_finished
 from ksae_2026_autumn.telemetry import write_json
 
@@ -160,6 +161,11 @@ def run(args):
         raise ValueError("Violation recording requires logging on")
     if sys.version_info[:2] != (3, 10):
         raise RuntimeError("Use Python 3.10 with CARLA Garage dependencies installed")
+    delay = (
+        DelayConfig(args.delay_ms, args.delay_onset_s, args.delay_duration_s)
+        if args.delay_ms is not None
+        else None
+    )
     garage, carla, model, base, evaluator, routes, weight, selected, hashes = prepare(args)
     output = Path(args.output).expanduser().resolve()
     # Refuse to mix an earlier execution into this one, even when it failed.
@@ -231,12 +237,17 @@ def run(args):
         sys.executable,
         "-u",
         "-m",
-        "ksae_2026_autumn.violation_runtime",
+        (
+            "ksae_2026_autumn.latency_runtime"
+            if delay is not None
+            else "ksae_2026_autumn.violation_runtime"
+        ),
         str(evaluator),
         *arguments,
     ]
     meta = {
         "schema_version": 1,
+        "action_delay": delay.to_dict() if delay is not None else None,
         "run_id": str(uuid.uuid4()),
         "started_at": utc_now(),
         "logging_enabled": args.logging == "on",
@@ -262,7 +273,10 @@ def run(args):
             "Sensor tuples retain frame IDs; world and agent clocks have different origins."
         ),
         "action_timestamp_note": (
-            "No injected delay; native multi-frame LiDAR history is recorded separately."
+            "Episodic FIFO after TF++; per-command readiness; ordered release with latest-ready "
+            "selection; onset relative to first logged frame; native LiDAR history is separate."
+            if delay is not None
+            else "No injected delay; native LiDAR history is separate."
         ),
     }
     write_json(output / "run.json", meta)
@@ -370,6 +384,9 @@ def main():
     run_parser.add_argument("--tm-port", type=int, default=8000)
     run_parser.add_argument("--gpu", type=int, default=0)
     run_parser.add_argument("--timeout", type=float, default=600)
+    run_parser.add_argument("--delay-ms", type=int, choices=[0, 100, 200, 500], default=None)
+    run_parser.add_argument("--delay-onset-s", type=float, default=5.0)
+    run_parser.add_argument("--delay-duration-s", type=float, default=2.0)
     args = parser.parse_args()
     try:
         if not args.model:

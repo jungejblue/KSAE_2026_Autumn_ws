@@ -8,6 +8,7 @@
 | TransFuser++ 주행 실행 | `tools/run_tfpp.py`에 설정 YAML 입력 | CARLA Garage 평가 결과와 실행 정보 |
 | 주행 시계열 기록 | `tools/run_telemetry.py run` | 센서 프레임, 차량 상태, 제어 명령 JSONL |
 | 충돌·이탈 기록 | `tools/run_violations.py run` | 바퀴 참조점, 충돌 이벤트, 위반 결과 |
+| E2E 제어 명령 지연 주입 | `tools/run_violations.py run --delay-ms …` | 지연된 명령 제출과 프레임별 지연 기록 |
 | 오프라인 안전 지표 추출 | `tools/extract_safety_metrics.py --input … --output …` | TTC·TTLC·충돌 직전 속도 CSV |
 | 제어 명령 지연·전환 판단 | Python에서 `control.py` 함수 사용 | 지연된 명령 또는 전환 여부 |
 
@@ -369,6 +370,114 @@ route ID는 XML에 있는 값으로 선택합니다. 출력 폴더는 매번 새
 구간을 선택하고 충돌·이탈을 집계하여 앞의 `pairs.json` 형식으로 준비해야 합니다.
 이 저장소는 현재 자동 쌍대 재실행이나 안전 제어기 전환까지 실행하지 않습니다.
 
+## E2E 제어 명령 지연 주입
+
+`run_violations.py run`에 지연 옵션을 추가하면 TF++가 반환한 제어 명령을 FIFO에
+저장하고, 준비된 명령을 평가기에 전달합니다. 센서 입력과 TF++ 호출은 계속 진행하며,
+충돌·주행 영역 이탈 기록도 함께 저장합니다. 별도의 실행 스크립트는 필요하지 않습니다.
+
+이는 **시뮬레이션 프레임 기준의 추가 제어 명령 지연**입니다. GPU 추론 시간을 늘리거나
+프로세스를 `sleep`시키는 기능이 아닙니다. 안전 제어기로 전환하는 기능도 포함하지 않습니다.
+
+### 지연을 지정하여 실행
+
+앞의 위반 기록 환경을 준비한 뒤 실행합니다. Local 모드는 CARLA 서버를 먼저 켭니다.
+아래 예시는 각 route에서 첫 기록 프레임으로부터 5초 후, 2초 동안 생성한 명령에
+200ms 지연을 지정합니다. 출력 폴더는 매번 새 경로를 사용하세요.
+
+```bash
+python tools/run_violations.py run \
+  --evaluator local \
+  --garage "$CARLA_GARAGE_ROOT" --carla "$CARLA_ROOT" \
+  --model "$TFPP_MODEL" \
+  --routes "$CARLA_GARAGE_ROOT/leaderboard/data/debug.xml" \
+  --seed 100 --gpu 0 \
+  --delay-ms 200 --delay-onset-s 5 --delay-duration-s 2 \
+  --output "$EXPERIMENT_OUTPUT_ROOT/violations_delay_200ms_001"
+```
+
+Bench2Drive에서는 기존 CARLA 서버를 종료하고, 전체 CARLA 설치와 Garage 의존성이
+있는 호스트 Python 환경에서 실행합니다. 현재 Docker 도구는 local 실행용입니다.
+
+```bash
+python tools/run_violations.py run \
+  --evaluator b2d \
+  --garage "$CARLA_GARAGE_ROOT" --carla "$CARLA_ROOT" \
+  --model "$TFPP_MODEL" \
+  --routes "$CARLA_GARAGE_ROOT/Bench2Drive/leaderboard/data/bench2drive220.xml" \
+  --routes-subset 24211 --seed 100 --gpu 0 \
+  --delay-ms 200 --delay-onset-s 5 --delay-duration-s 2 \
+  --output "$EXPERIMENT_OUTPUT_ROOT/violations_b2d_delay_200ms_001"
+```
+
+route ID는 사용할 XML에 있는 값으로 바꿉니다.
+
+| 옵션 | 기본값과 의미 |
+|---|---|
+| `--delay-ms` | 생략하면 지연 채널을 연결하지 않음. 지정 가능한 값은 `0`, `100`, `200`, `500`ms |
+| `--delay-onset-s` | `5.0`. 각 route의 첫 기록 프레임을 기준으로 지연 지정 시작 시각 |
+| `--delay-duration-s` | `2.0`. 지연을 지정할 명령의 생성 구간 길이 |
+
+동기식 0.05초 간격에서 100/200/500ms는 2/4/10tick입니다. 시작 시각은 0 이상,
+길이는 0 초과여야 하며 둘 다 0.05초의 배수로 지정합니다. 시작·길이 옵션은
+`--delay-ms`를 지정한 경우에만 사용됩니다. 시뮬레이션 시간 기준이며 실제 경과 시간이 아닙니다.
+
+`--delay-ms 0`은 지연 채널을 통과하면서 현재 명령을 그대로 전달하고 지연 정보를
+기록합니다. 옵션 생략과 구분하여 비교 조건에 사용하세요. 기본 설정에서는 route tick
+100부터 139까지 생성한 40개 명령이 지정 구간에 해당합니다. route가 먼저 끝나면
+구간이 실행되지 않거나 일부만 기록될 수 있습니다.
+
+### FIFO 동작과 저장 필드
+
+명령의 준비 프레임은 `생성 프레임 + 지정한 지연 tick`입니다. 아직 준비되지 않은
+선두 명령을 뒤의 명령이 추월하지 않습니다. 새로 전달할 명령이 없으면 이전 전달 명령을
+유지하며, 첫 호출부터 지연이 시작되어 이전 명령도 없으면 초기 제동 명령을 사용합니다.
+동시에 여러 명령이 준비되면 그중 가장 최근 명령을 전달하고 나머지를 기록합니다.
+route가 바뀌면 버퍼와 시작 프레임도 새로 초기화됩니다.
+
+지정 구간이 끝나도 남은 버퍼 때문에 최대 `지연 tick - 1`프레임 동안 과거 명령이
+전달될 수 있습니다. 따라서 새 명령에 지정한 지연과 실제 전달된 명령의 나이를 구분합니다.
+
+설정은 `run.json`과 `routes/<route_id>/route.json`의 `action_delay`에 저장됩니다.
+다음 필드는 `ticks.jsonl`에 저장됩니다. 기존 차량 상태와 별도의 충돌·이탈 기록을
+프레임 기준으로 함께 해석합니다.
+
+| 필드 | 의미 |
+|---|---|
+| `e2e_control` | 현재 TF++ 호출이 새로 생성한 원본 명령 |
+| `selected_control`, `submitted_control` | 평가기가 선택하고 제출 함수에 전달한 명령 |
+| `action_delay.route_tick` | 첫 기록 프레임을 0으로 둔 route 내 tick |
+| `action_delay.episode_active` | 현재 생성 명령이 지정 구간에 포함되는지 여부 |
+| `action_delay.requested_delay_ticks` | 현재 생성 명령에 지정한 지연 |
+| `injected_delay_ticks` | 실제 선택 명령이 생성된 후 지난 tick. 초기 명령 부재 시 `null` |
+| `action_delay.selected_generation_frame` | 선택 명령의 생성 프레임 |
+| `action_delay.selected_source_frame` | 선택 명령이 참조한 센서 기준 프레임 |
+| `current_e2e_action_source_frame` | 현재 새로 생성한 E2E 명령의 센서 기준 프레임 |
+| `action_source_frame`, `action_observation_age_s` | 선택 명령의 센서 기준 프레임과 관측 나이 |
+| `action_delay.held`, `action_delay.initial_hold` | 이전 명령 유지 여부와 초기 명령 부재 여부 |
+| `action_delay.queue_depth` | 남아 있는 버퍼 명령 개수 |
+| `action_delay.released_frames`, `action_delay.superseded_frames` | 준비되어 꺼낸 명령과 그중 제출을 생략한 명령의 생성 프레임 |
+| `delay_wall_ms` | 버퍼 처리·VehicleControl 구성 등에 걸린 시간. TF++ 추론 시간 제외 |
+
+`action_observation_age_s`에는 센서의 기존 프레임 차이도 포함될 수 있어 주입한 명령
+지연과 같다고 가정하면 안 됩니다. 제출 기록은 함수 호출 근거이며 물리 서버 처리 완료
+응답을 뜻하지 않습니다. `ActionDelay.snapshot()`과 `restore()`는 지연 버퍼 상태만
+저장·복원하며 CARLA world, 다른 차량, 모델 내부 상태까지 복원하지 않습니다.
+
+### 지연 주행의 안전 지표 추출
+
+앞에서 생성한 실행 폴더를 그대로 입력합니다. 실제 주행이 끝난 뒤 실행하세요.
+
+```bash
+python tools/extract_safety_metrics.py \
+  --input "$EXPERIMENT_OUTPUT_ROOT/violations_delay_200ms_001" \
+  --output "$EXPERIMENT_OUTPUT_ROOT/metrics_delay_200ms_001"
+```
+
+Bench2Drive 결과에는 해당 실행 폴더를 지정합니다. 아래 안전 지표 설명에서 입력 조건과
+계산 가정을 확인하세요. 지연 설정·출력 디렉터리 이외의 모델, route, seed 등 비교 조건은
+동일하게 맞춥니다. 같은 seed만으로 서로 다른 실행의 궤적이 완전히 같아지는 것은 아닙니다.
+
 ## 기록된 주행에서 안전 지표 추출
 
 `extract_safety_metrics.py`는 `run_violations.py run`으로 저장한 주행 기록에서
@@ -451,7 +560,8 @@ JSON의 `null`과 CSV의 빈 값은 0이 아닙니다. 반드시 상태 필드�
 
 ## Python에서 제어 유틸리티 사용
 
-`ActionDelayFIFO`는 입력 명령을 지정한 호출 횟수만큼 늦춰 반환합니다.
+`ActionDelayFIFO`는 입력 명령을 지정한 호출 횟수만큼 늦춰 반환하는 기본 유틸리티입니다.
+위의 실제 주행 지연 실행기는 별도의 `action_delay.py`에 있는 `ActionDelay`를 사용합니다.
 
 ```python
 from ksae_2026_autumn.control import ActionDelayFIFO
@@ -498,7 +608,9 @@ print(switch)  # True
 | `src/ksae_2026_autumn/violation_geometry.py` | MKZ 바퀴 참조점 좌표 변환 |
 | `src/ksae_2026_autumn/violations.py` | 충돌·이탈 결합 |
 | `src/ksae_2026_autumn/violation_runtime.py` | 주행 중 검출 및 저장 |
-| `src/ksae_2026_autumn/violation_launcher.py` | 위반 검출 주행 실행 |
+| `src/ksae_2026_autumn/violation_launcher.py` | 위반 검출 주행 실행과 선택적 지연 옵션 |
+| `src/ksae_2026_autumn/action_delay.py` | 구간별 명령 지연 FIFO와 버퍼 상태 저장·복원 |
+| `src/ksae_2026_autumn/latency_runtime.py` | TF++ 반환 뒤 지연 채널 연결과 메타데이터 기록 |
 | `src/ksae_2026_autumn/run_status.py` | 실행 종료 오류 전달 |
 | `src/ksae_2026_autumn/safety_metrics.py` | TTC·TTLC·충돌 직전 속도 계산 |
 | `src/ksae_2026_autumn/safety_metrics_io.py` | 기록 입력, 정합성 검사, CSV·JSON 출력 |
