@@ -1,6 +1,6 @@
 # KSAE_2026_Autumn_ws
 
-**CARLA에서 TransFuser++를 실행하고, 주행 기록에서 안전 지표를 계산하고 제어 결과를 비교·집계하는 Python 도구 모음입니다.**
+**CARLA에서 TransFuser++를 실행하고, E2E·fallback 전환 시나리오와 주행 기록의 안전 결과를 비교하는 Python 도구 모음입니다.**
 
 | 기능 | 사용 방법 | 출력 |
 |---|---|---|
@@ -10,6 +10,8 @@
 | 충돌·이탈 기록 | `tools/run_violations.py run` | 바퀴 참조점, 충돌 이벤트, 위반 결과 |
 | E2E 제어 명령 지연 주입 | `tools/run_violations.py run --delay-ms …` | 지연된 명령 제출과 프레임별 지연 기록 |
 | 오프라인 안전 지표 추출 | `tools/extract_safety_metrics.py --input … --output …` | TTC·TTLC·충돌 직전 속도 CSV |
+| E2E → fallback → E2E 시나리오 | `tools/run_dual_scenario.py` | 세 모드 주행, 전환·복귀 기록과 비교 결과 |
+| 저장된 시나리오 결과 비교 | `tools/compare_dual_runs.py` | 상태 일치, 위반, 복귀·계산 시간 집계 |
 | 규칙 기반 fallback 제어 | `fallback_control` Python API | 가속도·조향각 또는 CARLA VehicleControl |
 | 제어 명령 지연·전환 판단 | Python에서 `control.py` 함수 사용 | 지연된 명령 또는 전환 여부 |
 
@@ -369,7 +371,8 @@ route ID는 XML에 있는 값으로 선택합니다. 출력 폴더는 매번 새
 
 위반 로그는 `evaluate_pairs.py` 입력과 다릅니다. 동일 조건에서 비교할 두 실행의 평가
 구간을 선택하고 충돌·이탈을 집계하여 앞의 `pairs.json` 형식으로 준비해야 합니다.
-이 저장소는 현재 자동 쌍대 재실행이나 안전 제어기 전환까지 실행하지 않습니다.
+이 위반 기록 명령은 E2E 주행만 수행합니다. 제어 전환과 복귀를 비교하려면
+아래의 `run_dual_scenario.py` 시나리오 실행 명령을 사용하세요.
 
 ## E2E 제어 명령 지연 주입
 
@@ -564,7 +567,8 @@ JSON의 `null`과 CSV의 빈 값은 0이 아닙니다. 반드시 상태 필드�
 `fallback_control`은 로컬 경로 후보 생성, CBF·CLF 조건을 사용하는 MPC, CARLA 제어 명령
 변환을 제공하는 Python 라이브러리입니다. 기본 `sampled` backend는 NumPy로 후보를 계산합니다.
 CARLA adapter는 차량·보행자·신호등 등의 시뮬레이터 정답 상태를 사용합니다.
-TF++와의 전환 판단·동시 실행이나 쌍대 재실행은 이 라이브러리에 자동 연결되어 있지 않습니다.
+TF++와 연결한 고정 전환·복귀 예제는 아래의 `run_dual_scenario.py`에서 제공합니다.
+이 라이브러리 자체는 전환 시점을 결정하지 않습니다.
 
 ### 설치와 설정
 
@@ -658,7 +662,8 @@ ego_vehicle.apply_control(control)
 - 경로·world·ego가 바뀌면 새 `CarlaFallback`을 생성합니다. `FallbackController.reset()`은
   코어 상태 초기화이며 adapter 전체나 CARLA world 복원을 대신하지 않습니다.
 
-이 라이브러리는 별도 CARLA 서버 시작, 차량 spawn, route 선택 실행기를 제공하지 않습니다.
+일반 경로에 연결할 때는 실행기에서 서버·차량·route 수명 주기를 관리합니다.
+아래의 듀얼 시나리오 명령은 포함된 Town01 경로에 대해 이 과정을 수행합니다.
 기존 `run_tfpp.py`·`run_violations.py`는 자동으로 이 제어기를 사용하지 않습니다.
 차선 변경 경로, 역주행, 급경사 등 지원하지 않는 조건은 adapter에서 거부합니다.
 맵 구조물 중 actor로 제공되지 않는 물체는 자동으로 모두 관측되는 것이 아니므로 필요한
@@ -667,7 +672,8 @@ ego_vehicle.apply_control(control)
 ### 동작 범위와 해석
 
 확인된 CARLA 단독 주행 범위는 Town01의 저속 직선·곡선·좌우 경로 복귀·정적 차량·횡단
-보행자 조건입니다. 다른 맵·노면·속도, TF++ 병행 실행 및 전환 성능까지 보장하지 않습니다.
+보행자 조건입니다. 다른 맵·노면·속도의 동작까지 보장하지 않습니다. TF++와의 전환 예제는
+아래에 설명한 고정 시나리오 범위로 사용합니다.
 이미 영역 밖에서 시작한 복귀 시나리오는 이탈 기록이 남아도 복귀 동작의 성공을 별도로
 판정할 수 있습니다. 이는 충돌 OR 영역 이탈이라는 위반 정의를 바꾸는 것이 아닙니다.
 
@@ -676,6 +682,189 @@ ego_vehicle.apply_control(control)
 의존하며 실제 폐루프 안전이나 안정성을 무조건 증명하지 않습니다.
 입력 정합성 검사는 유효하지 않은 상태를 검출하며, `diagnostics`는 명령 계산 시간과
 비상 명령의 원인 등 실행 중 진단 정보를 제공합니다.
+
+## 시나리오로 E2E → fallback → E2E 복귀 비교
+
+`run_dual_scenario.py`는 Town01의 정지 선행 차량 시나리오를 세 가지 모드로 실행합니다.
+차량 생성, TF++ 호출, 제어권 전환, E2E 복귀와 결과 저장을 함께 수행하므로 별도 실행기
+코드를 작성할 필요가 없습니다. 주행 종료 후 `comparison.json`과 `metrics.csv`를 비교합니다.
+
+| 모드 | E2E 명령 채널 | 실제 ego 제어 |
+|---|---|---|
+| `clean` | 현재 명령 사용 | E2E 유지 |
+| `delayed` | fault 시작 직전 실제 명령을 3초간 유지 | E2E 유지 |
+| `takeover` | delayed와 같은 명령 유지 조건 | fault 시작 0.75초 후 fallback, 복귀 조건 충족 후 E2E |
+
+여기서 지연은 **마지막 명령 유지로 구현한 연산 정지 모사**입니다. TF++는 계속 계산하지만
+fault 구간의 새 출력을 명령 채널에서 버립니다. `run_violations.py --delay-ms`의 FIFO와는
+다른 조건이며, 실제 GPU 추론 프로세스를 정지시키는 기능은 아닙니다.
+전환 시점은 시나리오에 고정된 시험 입력이며 위험 기반 자동 전환 기준은 아닙니다.
+
+### 1. 실행 환경과 경로 준비
+
+앞의 TransFuser++ 환경 준비를 마친 **호스트 Python 3.10 환경**에서 실행합니다.
+CARLA Garage commit `72f39a63423a5edef6904b1487e0360a64bcf445`, 전체 CARLA 0.9.15 설치,
+Town01 맵, Lincoln MKZ 2020, NVIDIA GPU가 필요합니다. 모델 폴더에는 서로 대응하는
+`config.json`과 사용할 `.pth` 파일 하나를 준비합니다. 모델이 달라지면 fault가 발생하지
+않거나 비교 결과가 달라질 수 있습니다.
+
+```bash
+cd "$HOME/KSAE_2026_Autumn_ws"
+
+# CARLA Garage 의존성이 설치된 Python 환경을 활성화합니다.
+conda activate garage_2
+python -m pip install -e '.[fallback]'
+
+export CARLA_GARAGE_ROOT="$HOME/carla_garage"
+export CARLA_ROOT="$HOME/e2e_carla_ws"
+export TFPP_MODEL="$HOME/models/tfpp"
+export EXPERIMENT_OUTPUT_ROOT="$HOME/carla_outputs"
+```
+
+`garage_2`는 환경 이름 예시입니다. 실제 설치 경로와 환경 이름에 맞게 바꾸세요.
+같은 모델 조건으로 비교하려면 다음 기준 SHA-256과 준비한 파일을 대조할 수 있습니다.
+
+| 기준 파일 | SHA-256 |
+|---|---|
+| TF++ 가중치 한 개 | `d6fbdc28f7398354beadc7cf6765d866457c957f7b470c88ba206e73311a3b44` |
+| 대응하는 `config.json` | `895e3e9704ceda443169ca32aaef2712b1becf2d42473d7273071ec6ceda113e` |
+
+```bash
+sha256sum "$TFPP_MODEL"/*.pth "$TFPP_MODEL/config.json"
+```
+
+다른 모델도 실행할 수 있지만 위 모델 조건의 결과를 그대로 기대하면 안 됩니다.
+전체 CARLA 설치 폴더에는 `CarlaUE4.sh`와 `PythonAPI/`가 있어야 합니다.
+기존 `tools/docker.sh`는 PythonAPI만 연결하므로 이 시나리오는 위 호스트 환경에서 실행합니다.
+
+**실행 중인 CARLA 서버가 있다면 해당 터미널에서 `Ctrl+C`로 종료합니다.** 이 명령은
+각 모드에서 서버를 자동 시작합니다. 수동 주행이나 다른 평가기를 동시에 실행하지 마세요.
+
+### 2. 화면으로 전환과 복귀 확인
+
+다음 명령은 Clean → Delayed → Takeover를 한 번씩, 총 세 번 주행합니다.
+출력 경로는 아직 존재하지 않는 디렉터리로 지정합니다.
+
+```bash
+python tools/run_dual_scenario.py \
+  --config configs/dual_scenario.json \
+  --repetitions 1 \
+  --windowed \
+  --output "$EXPERIMENT_OUTPUT_ROOT/dual_visual_001"
+```
+
+CARLA 창은 ego를 따라가는 상공 시점으로 표시됩니다. 터미널에는 다음 이벤트가 출력됩니다.
+Clean의 `fault_onset`은 비교용 기준 시점이며 실제 명령 유지는 발생하지 않습니다.
+
+| 이벤트 | 확인할 동작 |
+|---|---|
+| `fault_onset` | 정지 선행 차량에 접근하면서 명령 유지 조건 시작 |
+| `takeover_forced` | Takeover 모드의 실제 제어권이 fallback으로 전환 |
+| `recovery` | 선행 차량 출발 후 간격·명령 신선도 조건을 만족하여 E2E로 복귀 |
+
+fallback은 같은 차선에서 감속·정지하며 선행 차량이 출발하면 다시 진행합니다.
+옆 차선으로 추월하는 시나리오는 아닙니다. fault 조건에 도달하지 못하거나 복귀가
+발생하지 않았다면 결과의 `attention`을 확인합니다. 화면만 보고 성공으로 판단하지 마세요.
+
+### 3. 같은 설정으로 반복 비교
+
+화면 출력 없이 세 번 반복하면 총 아홉 번 주행합니다.
+
+```bash
+python tools/run_dual_scenario.py \
+  --config configs/dual_scenario.json \
+  --repetitions 3 \
+  --output "$EXPERIMENT_OUTPUT_ROOT/dual_compare_001"
+```
+
+| 옵션 | 의미 |
+|---|---|
+| `--config` | 시나리오 JSON. 기본값은 저장소의 `configs/dual_scenario.json` |
+| `--repetitions` | 세 모드를 실행할 반복 횟수. 1~3, 기본 1 |
+| `--windowed` | CARLA 화면 표시. 생략하면 offscreen |
+| `--output` | 새 실행 폴더. 레포·Garage·CARLA·모델 폴더 밖에 저장 |
+| `--garage`, `--carla`, `--model` | 환경변수 대신 지정할 실제 경로 |
+| `--gpu` | GPU 인덱스. 기본 0 |
+| `--port`, `--tm-port` | CARLA RPC·Traffic Manager 포트. 기본 2000·8000 |
+| `--timeout` | 평가기 timeout(초). 기본 600 |
+
+명령에 `run` 하위 명령은 붙이지 않습니다. 이 실행은 seed 100과 고정된 전환·복귀 조건을
+사용합니다. `dual_scenario.json`은 route XML, 선행 차량 위치, fallback 설정과 이 조건을
+기록하며, 지원하지 않는 프로토콜 변경은 실행 전에 거부합니다.
+
+### 4. 결과 읽기와 다시 집계
+
+주행 명령은 실행 폴더에 결과를 자동 집계합니다.
+
+```bash
+python -m json.tool "$EXPERIMENT_OUTPUT_ROOT/dual_compare_001/comparison.json"
+cat "$EXPERIMENT_OUTPUT_ROOT/dual_compare_001/metrics.csv"
+```
+
+CARLA를 실행하지 않고 저장된 로그를 다시 집계하려면 새 결과 폴더를 지정합니다.
+이 도구는 시나리오의 전환·복귀와 안전 결과를 계산하는 분석 도구입니다.
+
+```bash
+python tools/compare_dual_runs.py \
+  --input "$EXPERIMENT_OUTPUT_ROOT/dual_compare_001" \
+  --output "$EXPERIMENT_OUTPUT_ROOT/dual_analysis_001"
+```
+
+| 출력 | 내용 |
+|---|---|
+| `comparison.json` | 반복별 상태 일치, 위반 결과, 이벤트, 비교 가능 여부 |
+| `metrics.csv` | 모드별 이탈 프레임·충돌 콜백·fallback 유지시간·복귀 후 이동량·계산 시간 |
+| `execution.json`, `suite_config.json`, `config/` | 실제 실행 목록·종료 코드·고정 설정 사본 |
+| `rep_00/{clean,delayed,takeover}/` | 각 실행의 원본 평가 결과·로그·소스와 설정 hash |
+| 각 실행의 `routes/RouteScenario_70001_rep0/ticks.jsonl` | 프레임별 `controller`, `dual`, 명령 나이와 실제 제출 명령 |
+| 같은 route의 `fault.json`, `violations.jsonl` | 명령 유지 조건과 충돌·이탈 기록 |
+
+`rep_01`, `rep_02`도 같은 구조입니다. 로그·소스 사본·분석 출력은 공개 레포에 커밋하지 않습니다.
+다시 실행할 때는 새 출력 경로를 사용합니다. 실행 오류가 나면 이후 모드를 중단하고 기록을
+보존합니다. 오류 없는 주행은 비교 효과가 없더라도 요청한 반복을 계속 수행합니다.
+
+### 안전상 이득을 판단하는 기준
+
+`comparison.json`의 `repetitions["0"].comparison`부터 확인합니다.
+
+| 필드 | 해석 |
+|---|---|
+| `configuration_match` | 세 실행의 모델·route·seed·코드·제어 설정 일치 |
+| `state_match` | Delayed와 Takeover의 전환 이전 ego·선행 차량 운동 상태가 허용 오차 이내 |
+| `V_E_H`, `V_F_H` | 전환 후보 시점부터 5초 동안 각각 위반이 발생했는지 여부 |
+| `stress_benefit_demonstrated` | 비교 조건을 만족하고 Delayed의 위반을 Takeover에서 방지했는지 |
+| `benefit_supported_pairs` | 전체 반복 중 위 조건으로 안전상 이득이 확인된 비교 수 |
+
+`benefit_supported_pairs`는 JSON 최상위 필드입니다. 위반은 **충돌 OR 고정 바퀴 참조점의
+허용 주행 영역 이탈**입니다. `V_E_H=true`, `V_F_H=false`에 더해 상태·설정 일치,
+전환 전 위반 없음, 유효한 Clean 기준 주행과 Takeover 복귀·후속 주행이 확인되어야
+이 시나리오에서 안전상 이득이 확인됐다고 해석합니다.
+
+Takeover의 `events`에 전환과 복귀가 있고 `post_recovery_frames`가 60 이상이며,
+`post_recovery_progress_m`가 5m 이상인지도 확인합니다. 복귀는 최소 fallback 유지 5초,
+선행 차량 출발, 간격 25m 이상, 최신 E2E 명령 및 유효한 fallback 명령 3프레임 연속을
+요구합니다. 선행 차량은 fault 시작 18초 후 출발합니다.
+
+최상위 `status=COMPLETE`와 명령 종료 코드 0은 요청된 주행 기록이 모두 분석됐다는 뜻입니다.
+안전상 이득은 별도로 확인해야 합니다. 개별 `PASS`는 해당 조건 충족, `REVIEW`는 해석에 필요한
+조건 미충족, `FAIL`은 실행·기록 오류, `BLOCKED`는 비교할 자료 부족을 뜻합니다.
+Delayed도 안전했다면 이 조건에서는 개입의 이득이 입증되지 않은 것이며 fallback 실패는 아닙니다.
+누락된 결과를 안전으로 간주하지 않습니다.
+
+Takeover는 Delayed의 전환 이전 제출 명령을 재생하고 관측된 운동 상태를 비교합니다.
+허용 오차는 위치 0.05m, 속도 벡터 0.1m/s, yaw 0.5도, 각속도 벡터 0.05rad/s,
+가속도 벡터 0.5m/s²입니다. 이는 완전한 CARLA 내부 상태·모델 이력·난수 상태 복원이 아닙니다.
+
+배경 교통은 없고 신호등은 녹색으로 고정됩니다. 원본 Garage 파일은 수정하지 않으며
+실행 사본에서 사용자 정의 route의 평가 결과 이름과 선택적 화면 옵션을 맞춥니다.
+평가기의 MinSpeed를 포함한 모든 위반은 결과에 남지만, 이 무교통 시나리오의 전환·복귀
+성공 조건에는 MinSpeed를 사용하지 않습니다. 사용자 정의 route 점수는 공식 Bench2Drive DS가 아닙니다.
+
+이 비교는 **해당 시나리오의 안전성**을 평가합니다. 모든 도로에서의 안전성, 제어 안정성의
+수학적 보장, 위험 기반 전환 기준의 정확도를 입증하지 않습니다. TF++와 fallback은 순차로
+계산되므로 `fallback_max_ms`와 `integration_max_ms`를 구분하세요. fallback만 50ms 이내여도
+전체 계산은 50ms를 넘을 수 있으며, 화면 표시 여부와 장비도 처리 시간에 영향을 줍니다.
+
 
 ## Python에서 제어 유틸리티 사용
 
@@ -715,7 +904,7 @@ print(switch)  # True
 
 | 위치 | 역할 |
 |---|---|
-| `configs/` | 실행 설정, 결과 입력 예제, fallback.json 제어 설정 |
+| `configs/` | 실행 설정, 결과 입력 예제, fallback 설정, 듀얼 시나리오 JSON·route XML |
 | `src/fallback_control/` | fallback 제어 코어와 CARLA adapter. 아래 파일별 설명 참조 |
 | `src/ksae_2026_autumn/control.py` | 명령 지연과 전환 판단 함수 |
 | `src/ksae_2026_autumn/evaluation.py` | 위반 판정, 결과 분류, 지표 집계 |
@@ -734,6 +923,12 @@ print(switch)  # True
 | `src/ksae_2026_autumn/run_status.py` | 실행 종료 오류 전달 |
 | `src/ksae_2026_autumn/safety_metrics.py` | TTC·TTLC·충돌 직전 속도 계산 |
 | `src/ksae_2026_autumn/safety_metrics_io.py` | 기록 입력, 정합성 검사, CSV·JSON 출력 |
+| `src/ksae_2026_autumn/dual_control.py` | 명령 유지·전환·복귀 조건과 prefix 상태 비교 |
+| `src/ksae_2026_autumn/dual_runtime.py` | 선행 차량 시나리오와 TF++·fallback 제어 연결 |
+| `src/ksae_2026_autumn/dual_cli.py` | 세 모드 순차 실행·설정·출력 관리 |
+| `src/ksae_2026_autumn/dual_results.py` | 전환·위반·복귀·계산 시간 결과 비교 |
+| `tools/run_dual_scenario.py` | 듀얼 시나리오 실행 명령 |
+| `tools/compare_dual_runs.py` | 저장된 듀얼 시나리오 결과 집계 명령 |
 | `tools/extract_safety_metrics.py` | 오프라인 안전 지표 추출 명령 |
 | `tools/` | 실행·결과 처리 명령 |
 

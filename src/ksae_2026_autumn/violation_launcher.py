@@ -156,7 +156,7 @@ def prepare(args):
     return garage, carla, model, base, evaluator, routes, weights[0], selected, hashes
 
 
-def run(args):
+def run(args, *, runtime_module=None, runtime_environment=None, extra_sources=()):
     if args.logging != "on":
         raise ValueError("Violation recording requires logging on")
     if sys.version_info[:2] != (3, 10):
@@ -170,6 +170,11 @@ def run(args):
     output = Path(args.output).expanduser().resolve()
     # Refuse to mix an earlier execution into this one, even when it failed.
     source_hashes = implementation_hashes()
+    for relative in extra_sources:
+        path = (ROOT / relative).resolve()
+        if not path.is_relative_to(ROOT) or not path.is_file():
+            raise ValueError(f"Invalid runtime source: {relative}")
+        source_hashes[relative] = sha256(path)
     output.mkdir(parents=True, exist_ok=False)
     env = os.environ.copy()
     env.update(CONTROL_ENV)
@@ -201,6 +206,8 @@ def run(args):
             "KSAE_TELEMETRY_OUTPUT": str(output),
         }
     )
+    if runtime_environment:
+        env.update(runtime_environment)
     arguments = [
         "--host",
         args.host,
@@ -237,7 +244,7 @@ def run(args):
         sys.executable,
         "-u",
         "-m",
-        (
+        runtime_module or (
             "ksae_2026_autumn.latency_runtime"
             if delay is not None
             else "ksae_2026_autumn.violation_runtime"

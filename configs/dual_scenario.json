@@ -1,0 +1,29 @@
+{
+  "schema_version": 1,
+  "scenario": "controlled_lead_stop",
+  "route_xml": "dual_lead_stop.xml",
+  "fallback_config": "fallback.json",
+  "control_dt": 0.05,
+  "time_limit_ticks": 1200,
+  "lead_spawn": {
+    "x": 204.05918884277344,
+    "y": 133.46075439453125,
+    "z": 0.0,
+    "yaw": 0.025599390268325806,
+    "width": 4.0,
+    "road": 4,
+    "lane": -1
+  },
+  "protocol": {
+    "trigger_gap_m": 50.0,
+    "trigger_min_speed_mps": 6.0,
+    "takeover_after_ticks": 15,
+    "stall_ticks": 60,
+    "horizon_ticks": 100,
+    "hold_ticks": 100,
+    "lead_release_ticks": 360,
+    "recovery_gap_m": 25.0,
+    "fresh_ticks": 3,
+    "post_recovery_ticks": 60
+  }
+}
