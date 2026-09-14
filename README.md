@@ -866,6 +866,97 @@ Takeover는 Delayed의 전환 이전 제출 명령을 재생하고 관측된 운
 전체 계산은 50ms를 넘을 수 있으며, 화면 표시 여부와 장비도 처리 시간에 영향을 줍니다.
 
 
+## 공통 후보 입력으로 쌍대 폐루프 비교
+
+`tools/run_paired_replay.py`는 Town01 정지 선행 차량 시나리오에서 후보 시점의 입력과
+소프트웨어 상태를 맞춘 뒤 E2E와 fallback의 독립 주행 결과를 비교합니다.
+기존 `run_dual_scenario.py`의 전환·복귀 비교와 달리 후보 이후 **3초**의 위반 여부를
+평가합니다. 기존 듀얼 시나리오의 평가 구간은 5초입니다.
+
+### 환경 준비
+
+앞의 TransFuser++ 환경 준비를 마친 호스트 Python 3.10 환경을 사용합니다.
+Garage 의존성, 지원 Garage commit, 전체 CARLA 0.9.15 설치와 Town01 맵,
+MKZ 2020 및 TF++ 모델이 필요합니다. `garage_2`와 아래 경로는 환경에 맞게 변경하세요.
+기존 Docker 도구는 PythonAPI만 연결하므로 이 실행은 호스트에서 수행합니다.
+
+```bash
+conda activate garage_2
+cd "$HOME/KSAE_2026_Autumn_ws"
+python -m pip install -e '.[fallback]'
+export CARLA_GARAGE_ROOT="$HOME/carla_garage"
+export CARLA_ROOT="$HOME/e2e_carla_ws"
+export TFPP_MODEL="$HOME/models/tfpp"
+export EXPERIMENT_OUTPUT_ROOT="$HOME/carla_outputs"
+```
+
+모델 폴더에는 대응하는 `config.json`과 가중치 `.pth` 한 개가 있어야 합니다.
+실행 중인 CARLA 서버를 먼저 종료하세요. 각 분기는 서버를 자동 시작합니다.
+
+### 주행 실행
+
+```bash
+python tools/run_paired_replay.py run \
+  --repetitions 1 --seed 100 \
+  --output "$EXPERIMENT_OUTPUT_ROOT/paired_001"
+```
+
+| 분기 | 동작 |
+|---|---|
+| E0 | 명령 유지 fault가 있는 E2E 기준 주행과 후보 상태·입력 저장 |
+| E1, E2 | 후보 이전 E0 명령 재생, 후보 상태·입력 복원 후 E2E 독립 주행 |
+| F1, F2 | 같은 복원 절차 후 후보부터 평가 구간 동안 fallback 제어 |
+
+`--repetitions 1`은 5개 분기, `--repetitions 3`은 총 15개 분기를 요청합니다.
+출력은 매번 새 디렉터리로 지정하며 레포·Garage·CARLA·모델 폴더 밖에 저장합니다.
+`--garage`, `--carla`, `--model`로 환경변수를 대신할 수 있습니다.
+`--gpu` 기본값은 0, `--port`는 2000, `--tm-port`는 8000, `--timeout`은 600초입니다.
+이 명령은 화면 표시 옵션을 제공하지 않습니다.
+
+### 결과 확인 및 재집계
+
+```bash
+python -m json.tool "$EXPERIMENT_OUTPUT_ROOT/paired_001/review.json"
+python tools/run_paired_replay.py review \
+  --input "$EXPERIMENT_OUTPUT_ROOT/paired_001" \
+  --output "$EXPERIMENT_OUTPUT_ROOT/paired_analysis_001"
+```
+
+`review`는 저장된 결과를 재집계하는 하위 명령이며 CARLA 실행이 필요하지 않습니다.
+재집계 환경에도 이 패키지와 NumPy가 필요합니다. 원본 결과 폴더 전체를 보존하세요.
+
+| 출력 | 의미 |
+|---|---|
+| `review.json` | 반복별 입력·복원 상태 일치, 실행 유효성, `observed_V_E`, `observed_V_F` |
+| `replay_suite.json` | 반복 횟수, 모델 실행 조건, 시나리오와 실제 적용 설정 |
+| `execution.json` | 실제 실행 분기와 종료 코드 |
+| `rep_00/E0`, `E1`, `E2`, `F1`, `F2` | 분기별 로그·후보 상태·입력·위반 기록 |
+
+`PASS`는 비교 조건이 충족됐다는 뜻이며 안전상 이득 자체를 의미하지 않습니다.
+유효한 비교에서 `observed_V_E=true`, `observed_V_F=false`이면 해당 구간에서
+E2E의 위반을 fallback이 방지한 것으로 해석합니다. 위반은 충돌 OR 바퀴 참조점의
+허용 주행 영역 이탈입니다. 누락·불일치 결과는 안전한 주행으로 해석하지 않습니다.
+`FAIL`은 실행·기록 오류, `REVIEW`는 조건 미충족 또는 불완전한 비교를 뜻합니다.
+현재 실행기는 분기 오류 또는 반복의 비교 조건 미충족 시 이후 실행을 중단합니다.
+`requested_attempts`와 `recorded_attempts`를 함께 확인하세요.
+
+후보는 fault 시작 0.75초 뒤입니다. 후보까지 저장 명령으로 운동 상태를 재구성하고
+TF++ history·UKF·PID·route planner·RNG를 복원합니다. 후보 tick에만 공통 센서 값을
+제공하고 센서 frame ID는 현재 실행 값을 유지합니다. 이후에는 각 분기의 live 입력으로
+주행하며 미래 입력·명령을 재생하지 않습니다. Fallback은 재구성된 세계의 관측을 사용합니다.
+
+후보 이전 운동 상태·저장 명령 재생, 복원 상태, 후보 센서와 실제 forward 입력,
+평가 구간의 로그 완전성 및 동일 제어기 반복의 이진 위반 라벨 일치를 검사합니다.
+후보 이후 제어 명령·궤적 오차와 프레임별 위반 시퀀스 차이는 진단값이며 합격 기준이 아닙니다.
+이진 라벨 일치가 TTC·TTLC 등 연속 지표의 반복 안정성을 보장하지는 않습니다.
+
+공유 설정 `configs/dual_scenario.json`의 `horizon_ticks=100`은 기존 듀얼 실행용입니다.
+쌍대 실행은 이를 60으로 적용하며 `replay_suite.json`의 `effective_replay_settings`에
+기록합니다. 실행기와 분석기는 3초 구간에 맞춰져 있으므로 JSON 값만 바꿔 구간을
+변경할 수 없습니다. 나머지 시나리오·fallback 설정은 공유합니다.
+완전한 CARLA 물리 snapshot 복원, 전체 벤치마크 일반화, 위험 기반 자동 전환 및
+전체 시스템 실시간 성능을 보장하는 기능은 아닙니다.
+
 ## Python에서 제어 유틸리티 사용
 
 `ActionDelayFIFO`는 입력 명령을 지정한 호출 횟수만큼 늦춰 반환하는 기본 유틸리티입니다.
@@ -930,6 +1021,9 @@ print(switch)  # True
 | `tools/run_dual_scenario.py` | 듀얼 시나리오 실행 명령 |
 | `tools/compare_dual_runs.py` | 저장된 듀얼 시나리오 결과 집계 명령 |
 | `tools/extract_safety_metrics.py` | 오프라인 안전 지표 추출 명령 |
+| `tools/run_paired_replay.py` | 공통 후보 입력 기반 쌍대 실행·결과 재집계 |
+| `src/ksae_2026_autumn/replay_checkpoint.py`, `replay_candidate_input.py` | 후보 상태 복원과 입력 공유 |
+| `src/ksae_2026_autumn/paired_replay_runtime.py`, `paired_replay_cli.py`, `paired_replay_review.py` | 분기 주행·실행 관리·결과 비교 |
 | `tools/` | 실행·결과 처리 명령 |
 
 ### fallback_control 파일별 역할
