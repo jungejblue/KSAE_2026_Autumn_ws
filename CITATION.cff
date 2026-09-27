@@ -1,0 +1,15 @@
+cff-version: 1.2.0
+message: "If you use this software, cite this repository and record the source commit used for your results. See docs/reference.md for upstream citations."
+type: software
+title: "KSAE_2026_Autumn_ws: CARLA E2E and fallback evaluation tools"
+authors:
+  - name: "KSAE_2026_Autumn_ws contributors"
+repository-code: "https://github.com/jungejblue/KSAE_2026_Autumn_ws"
+url: "https://github.com/jungejblue/KSAE_2026_Autumn_ws"
+commit: "547ba1ff1d8ea794d5a06d3af2ddf052b88cbfdc"
+abstract: "Python tools for CARLA TransFuser++ execution, fallback takeover and recovery, paired live continuations, telemetry collection, and offline safety evaluation."
+keywords:
+  - CARLA
+  - autonomous driving
+  - fallback control
+  - paired replay
