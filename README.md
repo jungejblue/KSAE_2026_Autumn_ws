@@ -4,7 +4,7 @@
 
 정지 선행 차량 시나리오의 E2E → fallback → E2E 복귀를 실행하거나, 공통 후보 입력에서 E2E와 fallback의 독립 주행을 비교할 수 있습니다. 주행 기록, 명령 지연 주입, 오프라인 안전 지표 추출도 제공합니다.
 
-[설치·실행 설명서](docs/usage.md) · [설정·API 참고](docs/reference.md) · [인용](CITATION.cff) · [라이선스 상태](LICENSE.md)
+[설치·실행 설명서](docs/usage.md) · [설정·API 참고](docs/reference.md) · [인용](CITATION.cff)
 
 ## 기능 선택
 
@@ -115,10 +115,8 @@ python tools/evaluate_pairs.py configs/pairs.example.json
 
 CARLA 바이너리·맵·Garage 원본·모델·전체 실행 로그는 이 저장소에 포함하지 않습니다. 파일별 역할은 [참고 문서](docs/reference.md#files)에 있습니다.
 
-## 문의·인용·라이선스
+## 문의·인용
 
 오류 보고는 [Issues](https://github.com/jungejblue/KSAE_2026_Autumn_ws/issues)에 사용한 commit, 명령어, 관련 설정과 오류 메시지를 포함해 작성하세요. 개인 경로·인증정보·모델 가중치는 제외합니다.
 
 소프트웨어 인용은 [CITATION.cff](CITATION.cff)와 [인용 안내](docs/reference.md#citation)를 참고하세요. 실행에 사용한 commit과 모델 조건도 함께 남기는 것이 좋습니다.
-
-이 저장소 자체의 사용 허락은 [LICENSE.md](LICENSE.md)를 확인하세요. 현재 명시적 오픈소스 라이선스는 선언하지 않았습니다. CARLA·Garage·모델에는 각각의 조건이 적용되며 [외부 구성요소 안내](THIRD_PARTY_NOTICES.md)에 원문을 연결했습니다.

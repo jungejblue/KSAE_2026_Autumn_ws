@@ -331,5 +331,3 @@ print(switch)  # True
 - [CARLA 인용 안내](https://github.com/carla-simulator/carla/tree/0.9.15#citing-carla)
 - [CARLA Garage·TransFuser++ 및 통합 Bench2Drive 인용 안내](https://github.com/autonomousvision/carla_garage/tree/72f39a63423a5edef6904b1487e0360a64bcf445#citations)
 - [Bench2Drive 공식 저장소](https://github.com/Thinklab-SJTU/Bench2Drive)
-
-인용 정보는 사용·수정·재배포 허락을 대신하지 않습니다. [라이선스 상태](../LICENSE.md)와 [외부 구성요소](../THIRD_PARTY_NOTICES.md)를 함께 참고하세요.

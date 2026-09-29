@@ -64,7 +64,7 @@ cp /absolute/path/to/selected/model_0030_0.pth "$HOME/models/tfpp/"
 cp /absolute/path/to/matching/config.json "$HOME/models/tfpp/config.json"
 ```
 
-모델·설정의 기준 SHA-256은 [듀얼 시나리오](#dual)에 있습니다. 다운로드 파일이 기준 hash와 다르면 다른 모델 조건이며 동일 결과를 기대할 수 없습니다. 모델에는 Garage의 별도 라이선스가 적용됩니다.
+모델·설정의 기준 SHA-256은 [듀얼 시나리오](#dual)에 있습니다. 다운로드 파일이 기준 hash와 다르면 다른 모델 조건이며 동일 결과를 기대할 수 없습니다.
 
 ### 5. 환경변수
 
